@@ -3,7 +3,7 @@
 """
 Uppdaterar titles.json med nya filmer/serier som:
   - finns på Netflix, Apple TV+, HBO Max, Prime Video eller Disney+ i Sverige
-  - hade premiär de senaste fem åren
+  - hade premiär de senaste tio åren
   - har IMDb-betyg 7.0 eller högre
 
 Körs automatiskt en gång i veckan av .github/workflows/update-titles.yml,
@@ -34,7 +34,7 @@ TMDB_KEY = os.environ.get("TMDB_API_KEY", "")
 OMDB_KEY = os.environ.get("OMDB_API_KEY", "")
 REGION = "SE"
 MIN_IMDB = 7.0
-MAX_AGE_YEARS = 5
+MAX_AGE_YEARS = 10
 DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "titles.json")
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), "..", "history.json")
 HISTORY_MAX_RUNS = 20
