@@ -150,7 +150,7 @@ def discover_candidates(media_type, provider_id):
     # kollas istället per kandidat mot seriens FAKTISKA senaste säsong,
     # se get_tv_details().
     results = []
-    for page in (1, 2):
+    for page in (1, 2, 3, 4):
         params = dict(params_base)
         params["page"] = page
         data = tmdb_get("/discover/" + media_type, params)
