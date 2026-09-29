@@ -192,10 +192,14 @@ def get_tv_details(tv_id):
             # Vi vet ändå att en till säsong är på gång, bara inte när.
             upcoming_season = ""
 
+    next_ep = data.get("next_episode_to_air") or {}
+    next_episode = next_ep.get("air_date")  # None om inget schemalagt känt
+
     result = {
         "last_air_date": data.get("last_air_date") or data.get("first_air_date"),
         "overview_en": data.get("overview") or "",
         "upcoming_season": upcoming_season,
+        "next_episode": next_episode,
     }
     _TV_LAST_AIR_CACHE[tv_id] = result
     return result
@@ -320,6 +324,7 @@ def build_entry(item, media_type, service_name):
     overview_sv = (item.get("overview") or "").strip()
     overview_en = ""
     upcoming_season = None
+    next_episode = None
 
     if media_type == "tv":
         # Kolla mot seriens FAKTISKA senaste sändningsdatum - inte bara
@@ -335,6 +340,7 @@ def build_entry(item, media_type, service_name):
         date_str = details["last_air_date"]  # visas/sorteras på senaste säsongen, inte premiären
         overview_en = details["overview_en"]
         upcoming_season = details["upcoming_season"]
+        next_episode = details["next_episode"]
     elif not overview_sv:
         # Bara hämta den engelska beskrivningen separat om den svenska
         # faktiskt saknas - sparar ett onödigt anrop i normalfallet.
@@ -375,6 +381,7 @@ def build_entry(item, media_type, service_name):
         "mcId": "",
         "poster": omdb["poster"],
         "upcomingSeason": upcoming_season,
+        "nextEpisode": next_episode,
         "kind": kind,
     }
 
@@ -476,25 +483,42 @@ def main():
                     upgraded += 1
                     print("  ~ beskrivning: %s" % it["title"])
 
-    # Backfill: kolla om det finns en kommande/planerad säsong för serier
-    # som lades till innan upcomingSeason-fältet fanns.
-    missing_upcoming = [it for it in by_id.values()
-                         if it.get("kind") == "serie" and "upcomingSeason" not in it]
-    if missing_upcoming:
-        print("Kollar kommande säsonger för %d serier..." % len(missing_upcoming))
-        for it in missing_upcoming:
+    # Kollar kommande/planerad säsong OCH nästa avsnitts sändningsdatum i
+    # samma pass (ett TMDb-uppslag per serie istället för två separata).
+    # upcomingSeason kollas bara en gång (fältet saknas = aldrig kollad).
+    # nextEpisode uppdateras varje körning för alla pågående serier,
+    # eftersom den datan blir inaktuell så fort avsnittet sänts.
+    today_str = date.today().isoformat()
+    needs_check = [
+        it for it in by_id.values()
+        if it.get("kind") == "serie" and (
+            "upcomingSeason" not in it
+            or (it.get("upcomingSeason") is not None and (
+                "nextEpisode" not in it
+                or not it.get("nextEpisode")
+                or it["nextEpisode"] < today_str
+            ))
+        )
+    ]
+    if needs_check:
+        print("Kollar kommande säsong/nästa avsnitt för %d serier..." % len(needs_check))
+        for it in needs_check:
             tmdb_id = tmdb_find_id(it["title"], it["date"][:4], "tv")
             time.sleep(0.1)
             if tmdb_id:
                 details = get_tv_details(tmdb_id)
-                it["upcomingSeason"] = details["upcoming_season"]
+                if "upcomingSeason" not in it:
+                    it["upcomingSeason"] = details["upcoming_season"]
+                    if details["upcoming_season"] is not None:
+                        print("  ~ kommande säsong: %s" % it["title"])
+                if it.get("nextEpisode") != details["next_episode"]:
+                    it["nextEpisode"] = details["next_episode"]
+                    if details["next_episode"]:
+                        print("  ~ nästa avsnitt: %s (%s)" % (it["title"], details["next_episode"]))
                 upgraded += 1
-                if details["upcoming_season"] is not None:
-                    print("  ~ kommande säsong: %s" % it["title"])
-            # Annars: lämna fältet osatt - annars skulle en TILLFÄLLIGT
-            # misslyckad sökning permanent stämplas som "ingen kommande
-            # säsong", och titeln skulle aldrig kollas igen. Nu försöker
-            # nästa körning på nytt istället.
+            # Annars: lämna fälten osatta/oförändrade - en TILLFÄLLIGT
+            # misslyckad sökning ska inte permanent stämpla något, och
+            # nästa körning försöker på nytt istället.
 
     for media_type in ("movie", "tv"):
         print("== %s ==" % media_type)
