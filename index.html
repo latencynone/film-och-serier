@@ -580,6 +580,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   var NOW = new Date();
   var MONTHS = ["JAN","FEB","MAR","APR","MAJ","JUN","JUL","AUG","SEP","OKT","NOV","DEC"];
   var MONTHS_LONG = ["januari","februari","mars","april","maj","juni","juli","augusti","september","oktober","november","december"];
+  var WEEKDAYS = ["sön","mån","tis","ons","tor","fre","lör"];
   var store = {
     get: function (k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
     set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
@@ -1048,7 +1049,13 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   // säsong, eller "Ny säsong (okänt datum)" om den är planerad men utan
   // datum än. Tom sträng om ingen kommande säsong är känd.
   function upcomingSeasonHtml(it) {
-    if (it.kind !== "serie" || it.upcomingSeason === undefined || it.upcomingSeason === null) return "";
+    if (it.kind !== "serie") return "";
+    if (it.nextEpisode) {
+      var ed = parseDate({ date: it.nextEpisode });
+      return '<p class="upcoming-season">Nästa avsnitt ' + WEEKDAYS[ed.getDay()] + " " +
+        String(ed.getDate()).padStart(2, "0") + " " + MONTHS_LONG[ed.getMonth()].slice(0, 3) + "</p>";
+    }
+    if (it.upcomingSeason === undefined || it.upcomingSeason === null) return "";
     if (it.upcomingSeason) {
       var ud = parseDate({ date: it.upcomingSeason });
       return '<p class="upcoming-season">Ny säsong ' + MONTHS_LONG[ud.getMonth()] + " " + ud.getFullYear() + "</p>";
