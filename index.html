@@ -193,11 +193,19 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   font-size:12px;padding:8px 14px;border-radius:var(--radius);cursor:pointer;margin-bottom:16px}
 .page-back:hover{color:var(--txt);border-color:var(--txt)}
 .page-title{font-family:var(--display);font-size:22px;margin:0 0 4px;text-transform:none;letter-spacing:normal}
-.compare-pickers{display:flex;align-items:center;gap:10px;margin-bottom:18px}
-.compare-pickers .menu-pick-select{flex:1;background:var(--panel);border:1px solid var(--line)}
-.compare-vs{font-family:var(--mono);color:var(--dim);font-size:13px;flex:0 0 auto}
 .compare-count{font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:var(--dim);
-  text-transform:uppercase;margin:0 0 10px}
+  text-transform:uppercase;margin:18px 0 10px}
+.compare-count:first-of-type{margin-top:0}
+.match-pickers{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.match-check{display:flex;align-items:center;gap:7px;border:1px solid var(--line);
+  border-radius:999px;padding:8px 14px 8px 10px;font-size:13px;cursor:pointer;
+  background:var(--panel)}
+.match-check input{width:17px;height:17px;flex:0 0 17px;accent-color:var(--film);cursor:pointer}
+.match-check.is-disabled{opacity:.4}
+.match-check.is-disabled input{cursor:not-allowed}
+.match-shared-badge{font-family:var(--mono);font-size:9px;letter-spacing:.06em;
+  color:var(--sett);text-transform:uppercase;border:1px solid var(--sett);
+  border-radius:4px;padding:1px 5px;margin-left:4px}
 .select-wrap{position:relative;flex:1 1 160px}
 .select-wrap:after{content:'▾';position:absolute;right:10px;top:50%;transform:translateY(-50%);
   color:var(--dim);pointer-events:none;font-size:11px}
@@ -265,6 +273,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   color:var(--sett);letter-spacing:.02em;margin:8px 0 0}
 .desc{font-size:14px;line-height:1.55;color:var(--desc);margin:8px 0 0}
 .actions{display:flex;gap:8px;flex-shrink:0}
+.heart:disabled,.watch:disabled,.trash:disabled,.star:disabled,
+.rate-sel:disabled,.who-sel:disabled{opacity:.4;cursor:not-allowed}
 .heart,.watch,.trash,.star{background:none;border:1px solid var(--line);color:var(--dim);cursor:pointer;
   width:44px;height:44px;flex:0 0 44px;font-size:19px;line-height:1;transition:.16s;border-radius:var(--radius)}
 .heart[data-on="1"]{color:var(--fav);border-color:var(--fav);background:rgba(255,127,154,.12)}
@@ -499,6 +509,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 [data-theme="soft"] .search-input{background:#EBEBF0; border-color:#C7C7CC}
 [data-theme="soft"] .more-row{border-top-style:solid}
 </style>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
@@ -581,6 +593,33 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   var MONTHS = ["JAN","FEB","MAR","APR","MAJ","JUN","JUL","AUG","SEP","OKT","NOV","DEC"];
   var MONTHS_LONG = ["januari","februari","mars","april","maj","juni","juli","augusti","september","oktober","november","december"];
   var WEEKDAYS = ["sön","mån","tis","ons","tor","fre","lör"];
+  /* ============ molnsynk (delade profiler) ============
+     ERSÄTT värdena nedan med din egen Firebase-konfiguration
+     (Project settings → Your apps → kodsnutten som börjar med
+     "const firebaseConfig = {...}"). Utan giltig konfiguration
+     fungerar allt annat i appen som vanligt - bara delning/synk
+     stängs av tyst (se cloudReady nedan).
+  ==================================== */
+  var firebaseConfig = {
+    apiKey: "AIzaSyDSga9pG-tBxmoG6QyZYE15L1Ykr2Yzxqs",
+    authDomain: "filmoserier-15b5b.firebaseapp.com",
+    projectId: "filmoserier-15b5b",
+    storageBucket: "filmoserier-15b5b.firebasestorage.app",
+    messagingSenderId: "843406470155",
+    appId: "1:843406470155:web:52a6858bea35d43408eb0e"
+  };
+  var cloudReady = false;
+  var db = null;
+  try {
+    if (firebaseConfig.apiKey && firebaseConfig.apiKey.indexOf("DIN_") !== 0 && typeof firebase !== "undefined") {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.firestore();
+      cloudReady = true;
+    }
+  } catch (e) {
+    cloudReady = false;
+  }
+
   var store = {
     get: function (k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
     set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
@@ -642,13 +681,20 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   function REMOVED_KEY() { return nsKey(BASE_REMOVED); }
   function RATING_KEY() { return nsKey(BASE_RATING); }
 
-  // Sällskapsalternativ för Vill se. Lägg till fler här vid behov –
-  // både kortens väljare och filterraden byggs från den här listan.
-  var WHO_OPTIONS = [
+  // Sällskapsalternativ för Vill se. De tre första är alltid med; därtill
+  // läggs namnet på varje profil du tagit emot via delning (se getWhoOptions).
+  var WHO_PRESETS = [
     { id: "sjalv", label: "Själv" },
     { id: "familj", label: "Familj" },
-    { id: "emma", label: "M&E" }
+    { id: "vanner", label: "Vänner" }
   ];
+  function getWhoOptions() {
+    var opts = WHO_PRESETS.slice();
+    state.profiles.forEach(function (p) {
+      if (isReceivedProfile(p)) opts.push({ id: "profil:" + p, label: p });
+    });
+    return opts;
+  }
   var THEME_KEY = "tipstablan:tema";
 
   /* ============ TITELBANKEN ============
@@ -748,9 +794,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     tab: "film",
     activeProfile: ACTIVE_PROFILE,
     profiles: ALL_PROFILES.slice(),
-    compareA: "",
+    matchSelected: [],
     page: 1,
-    compareB: "",
     theme: store.get(THEME_KEY) || "retro",
     active: SERVICES.slice(),
     genre: "",
@@ -833,9 +878,136 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     PROFILE_BASE_KEYS.forEach(function (base) {
       store.remove(base + ":" + name);
     });
+    if (activeSubscriptions[name]) { activeSubscriptions[name](); delete activeSubscriptions[name]; }
+    store.remove("tipstablan:shareid:" + name);
+    store.remove("tipstablan:received-shareid:" + name);
     state.profiles = state.profiles.filter(function (p) { return p !== name; });
     store.set(PROFILES_KEY, state.profiles);
     render();
+  }
+
+  /* ============ Dela profil & molnsynk ============ */
+
+  function genShareId() {
+    var chars = "abcdefghjkmnpqrstuvwxyz23456789"; // undviker lätt förväxlade tecken (0/o, 1/l/i)
+    var out = "";
+    for (var i = 0; i < 14; i++) out += chars[Math.floor(Math.random() * chars.length)];
+    return out;
+  }
+
+  function isReceivedProfile(name) {
+    return !!store.get("tipstablan:received-shareid:" + name);
+  }
+
+  function getShareId(name) {
+    return store.get("tipstablan:shareid:" + name);
+  }
+
+  // Skickar DEN AKTIVA profilens aktuella data till molnet, men bara om
+  // den profilen faktiskt är delad (har ett shareId sedan tidigare).
+  // Anropas efter varje ändring (favorit, betyg, osv.) - no-op annars.
+  function maybePushActiveProfileToCloud() {
+    if (!cloudReady || isReceivedProfile(state.activeProfile)) return;
+    var shareId = getShareId(state.activeProfile);
+    if (!shareId) return;
+    pushProfileToCloud(state.activeProfile, shareId);
+  }
+
+  function pushProfileToCloud(profileName, shareId) {
+    if (!cloudReady) return;
+    db.collection("profiles").doc(shareId).set({
+      name: profileName,
+      fav: store.get(BASE_FAV + ":" + profileName) || [],
+      watched: store.get(BASE_WATCHED + ":" + profileName) || [],
+      want: store.get(BASE_WANT + ":" + profileName) || [],
+      who: store.get(BASE_WANTWHO + ":" + profileName) || {},
+      ratings: store.get(BASE_RATING + ":" + profileName) || {},
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).catch(function () { /* nätverksfel etc - försöker igen vid nästa ändring */ });
+  }
+
+  // Delar den aktiva profilen via telefonens delningsmeny (mail/sms/
+  // AirDrop osv.) om det stödjs, annars kopieras länken till urklipp.
+  function shareActiveProfile() {
+    if (!cloudReady) {
+      alert("Molnsynk är inte konfigurerat i den här installationen än.");
+      return;
+    }
+    var name = state.activeProfile;
+    var shareId = getShareId(name);
+    if (!shareId) {
+      shareId = genShareId();
+      store.set("tipstablan:shareid:" + name, shareId);
+    }
+    pushProfileToCloud(name, shareId);
+
+    var url = location.origin + location.pathname + "?share=" + shareId + "&n=" + encodeURIComponent(name);
+    if (navigator.share) {
+      navigator.share({ title: "FILMoSERIER – " + name, text: "Följ min profil i FILMoSERIER", url: url }).catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(function () {
+        alert("Länk kopierad till urklipp:\n" + url);
+      }).catch(function () { prompt("Kopiera länken:", url); });
+    } else {
+      prompt("Kopiera länken:", url);
+    }
+    render();
+  }
+
+  var activeSubscriptions = {}; // profilnamn -> avprenumereringsfunktion
+
+  function subscribeToSharedProfile(profileName, shareId) {
+    if (!cloudReady || activeSubscriptions[profileName]) return;
+    activeSubscriptions[profileName] = db.collection("profiles").doc(shareId)
+      .onSnapshot(function (doc) {
+        if (!doc.exists) return;
+        var data = doc.data();
+        store.set(BASE_FAV + ":" + profileName, normalizeKeys(data.fav));
+        store.set(BASE_WATCHED + ":" + profileName, normalizeKeys(data.watched));
+        store.set(BASE_WANT + ":" + profileName, normalizeKeys(data.want));
+        store.set(BASE_WANTWHO + ":" + profileName, data.who || {});
+        store.set(BASE_RATING + ":" + profileName, data.ratings || {});
+        if (state.activeProfile === profileName) { loadProfileData(); drawAll(); }
+        render();
+      }, function () { /* tappad anslutning - localStorage har senast kända data kvar */ });
+  }
+
+  function resubscribeAllReceived() {
+    state.profiles.forEach(function (p) {
+      var shareId = store.get("tipstablan:received-shareid:" + p);
+      if (shareId) subscribeToSharedProfile(p, shareId);
+    });
+  }
+
+  // Kollar efter ?share=... i webbadressen (öppnad via en delad länk),
+  // hämtar profilen en gång och sätter sedan upp en live-prenumeration.
+  function checkIncomingShare() {
+    if (!cloudReady) return;
+    var params = new URLSearchParams(location.search);
+    var shareId = params.get("share");
+    if (!shareId) return;
+    var sharedName = (params.get("n") || "Delad profil").slice(0, 40);
+    history.replaceState({}, "", location.pathname);
+
+    var already = state.profiles.some(function (p) {
+      return store.get("tipstablan:received-shareid:" + p) === shareId;
+    });
+    if (already) return;
+
+    var displayName = sharedName;
+    if (state.profiles.indexOf(displayName) !== -1) displayName = sharedName + " (delad)";
+
+    db.collection("profiles").doc(shareId).get().then(function (doc) {
+      if (!doc.exists) { alert("Hittade ingen delad profil med den länken."); return; }
+      var data = doc.data();
+      applyBackupObj({ fav: data.fav, watched: data.watched, want: data.want, who: data.who, ratings: data.ratings }, displayName);
+      store.set("tipstablan:received-shareid:" + displayName, shareId);
+      subscribeToSharedProfile(displayName, shareId);
+      render();
+      alert("Du följer nu \"" + displayName + "\"s profil – den uppdateras automatiskt.");
+    }).catch(function () {
+      alert("Kunde inte hämta den delade profilen just nu. Testa igen senare.");
+    });
   }
 
   /* ============ backup via fil ============
@@ -1073,6 +1245,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     var k = keyOf(it);
     var myRating = state.ratings[k] || "";
     var myWho = state.wantWho[k] || "";
+    var readOnly = isReceivedProfile(state.activeProfile);
+    var dis = readOnly ? " disabled" : "";
     var rateOpts = '<option value="">Betygsätt</option>';
     for (var r = 1; r <= 10; r++) {
       rateOpts += '<option value="' + r + '"' + (myRating === r ? ' selected' : '') + '>Du ' + r + '</option>';
@@ -1107,39 +1281,40 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       "</div>" +
       '<div class="action-row">' +
       '<div class="actions">' +
-      '<button class="star" data-want="' + esc(k) + '" data-on="' + (want ? 1 : 0) +
-      '" aria-pressed="' + want + '" aria-label="' +
+      '<button class="star" data-want="' + esc(k) + '" data-on="' + (want ? 1 : 0) + '"' + dis +
+      ' aria-pressed="' + want + '" aria-label="' +
       (want ? "Ta bort " + esc(it.title) + " från vill se" : "Lägg " + esc(it.title) + " i vill se") +
       '">' + (want ? "&#9733;&#65038;" : "&#9734;&#65038;") + "</button>" +
-      '<button class="watch" data-watch="' + esc(k) + '" data-on="' + (watched ? 1 : 0) +
-      '" aria-pressed="' + watched + '" aria-label="' +
+      '<button class="watch" data-watch="' + esc(k) + '" data-on="' + (watched ? 1 : 0) + '"' + dis +
+      ' aria-pressed="' + watched + '" aria-label="' +
       (watched ? "Lägg tillbaka " + esc(it.title) + " bland tipsen" : "Markera " + esc(it.title) + " som sedd") +
       '">' + (watched ? "&#10004;&#65038;" : "&#9633;&#65038;") + "</button>" +
-      '<button class="heart" data-fav="' + esc(k) + '" data-on="' + (fav ? 1 : 0) +
-      '" aria-pressed="' + fav + '" aria-label="' +
+      '<button class="heart" data-fav="' + esc(k) + '" data-on="' + (fav ? 1 : 0) + '"' + dis +
+      ' aria-pressed="' + fav + '" aria-label="' +
       (fav ? "Ta bort " + esc(it.title) + " från favoriter" : "Spara " + esc(it.title) + " som favorit") +
       '">' + (fav ? "&hearts;&#65038;" : "&#9825;&#65038;") + "</button>" +
-      '<button class="trash" data-remove="' + esc(k) + '" aria-label="Ta bort ' + esc(it.title) +
+      '<button class="trash" data-remove="' + esc(k) + '"' + dis + ' aria-label="Ta bort ' + esc(it.title) +
       ' från tipsen">&#10005;</button>' +
       "</div>" +
-      '<select class="rate-sel" data-rate="' + esc(k) + '" data-rated="' + (myRating ? 1 : 0) +
-      '" aria-label="Sätt ditt betyg för ' + esc(it.title) + '">' + rateOpts + "</select>" +
+      '<select class="rate-sel" data-rate="' + esc(k) + '" data-rated="' + (myRating ? 1 : 0) + '"' + dis +
+      ' aria-label="Sätt ditt betyg för ' + esc(it.title) + '">' + rateOpts + "</select>" +
       "</div>" +
       '<div class="meta2"><span class="genre-tag">' + esc(it.genre) + "</span><span>" + esc(it.length) + "</span>" +
       ((state.tab === "favorit" || state.tab === "sett" || state.tab === "villse") ? "<span>" + (it.kind === "film" ? "Film" : "Serie") + "</span>" : "") +
       "</div>" +
       (state.tab === "villse"
         ? (function () {
-            var whoOpt = myWho ? WHO_OPTIONS.filter(function (w) { return w.id === myWho; })[0] : null;
+            var whoOptions = getWhoOptions();
+            var whoOpt = myWho ? whoOptions.filter(function (w) { return w.id === myWho; })[0] : null;
             var hintText = whoOpt ? " (" + esc(whoOpt.label) + ")" : "";
             var isOpen = !!state.expanded[k];
             return '<button class="more-tog" data-more="' + esc(k) + '" aria-expanded="' + isOpen + '">' +
               (isOpen ? "Mindre ▲" : "Sällskap" + hintText + " ▾") + "</button>" +
               '<div class="more-row"' + (isOpen ? "" : " hidden") + ">" +
-              '<select class="who-sel" data-whoset="' + esc(k) + '" data-set="' + (myWho ? 1 : 0) +
-              '" aria-label="Vem vill du se ' + esc(it.title) + ' med"><option value=""' +
+              '<select class="who-sel" data-whoset="' + esc(k) + '" data-set="' + (myWho ? 1 : 0) + '"' + dis +
+              ' aria-label="Vem vill du se ' + esc(it.title) + ' med"><option value=""' +
               (myWho ? "" : " selected") + '>Se med…</option>' +
-              WHO_OPTIONS.map(function (w) {
+              whoOptions.map(function (w) {
                 return '<option value="' + w.id + '"' +
                   (myWho === w.id ? " selected" : "") + ">" + esc(w.label) + "</option>";
               }).join("") + "</select>" +
@@ -1170,26 +1345,47 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     return normalizeKeys(store.get(BASE_WANT + ":" + profileName));
   }
 
-  function computeOverlap(profileA, profileB) {
-    var wantA = getProfileWantToSee(profileA);
-    var wantB = getProfileWantToSee(profileB);
-    var setB = {};
-    wantB.forEach(function (k) { setB[k] = true; });
-    return wantA.filter(function (k) { return setB[k]; })
-      .map(function (k) { return BY_KEY[k]; })
-      .filter(Boolean);
+  var MATCH_MAX = 5;
+
+  // Räknar för varje titel hur många av de valda profilerna som vill se
+  // den, och grupperar efter antal (flest röster först). Visar bara
+  // grupper med en majoritet (mer än hälften) - vid två profiler
+  // betyder det samma sak som "båda", precis som tidigare.
+  function computeMatches(profiles) {
+    var counts = {}; // key -> antal profiler som vill se den
+    profiles.forEach(function (p) {
+      getProfileWantToSee(p).forEach(function (k) {
+        counts[k] = (counts[k] || 0) + 1;
+      });
+    });
+    var minMajority = Math.floor(profiles.length / 2) + 1;
+    var groups = {}; // antal -> [titel, ...]
+    Object.keys(counts).forEach(function (k) {
+      var n = counts[k];
+      if (n < minMajority) return;
+      var it = BY_KEY[k];
+      if (!it) return;
+      (groups[n] = groups[n] || []).push(it);
+    });
+    return Object.keys(groups)
+      .map(Number)
+      .sort(function (a, b) { return b - a; })
+      .map(function (n) { return { count: n, items: groups[n].sort(newestFirst) }; });
   }
 
-  function profileSelectHtml(id, selected) {
-    return '<select class="menu-pick-select" id="' + id + '" aria-label="Välj profil">' +
-      state.profiles.map(function (p) {
-        return '<option value="' + esc(p) + '"' + (p === selected ? " selected" : "") + '>' + esc(p) + "</option>";
-      }).join("") + "</select>";
+  function matchCheckboxHtml(p) {
+    var checked = state.matchSelected.indexOf(p) !== -1;
+    var atCap = state.matchSelected.length >= MATCH_MAX && !checked;
+    return '<label class="match-check' + (atCap ? " is-disabled" : "") + '">' +
+      '<input type="checkbox" data-matchcheck="' + esc(p) + '"' + (checked ? " checked" : "") +
+      (atCap ? " disabled" : "") + '>' +
+      '<span>' + esc(p) + (isReceivedProfile(p) ? ' <span class="match-shared-badge">delad</span>' : "") + "</span>" +
+      "</label>";
   }
 
-  // Enklare, icke-interaktivt kort för jämförelsevyn - inga ikoner för
+  // Enklare, icke-interaktivt kort för matchningsvyn - inga ikoner för
   // favorit/sett/vill se/betyg, eftersom de hör till EN specifik profil
-  // och skulle vara missvisande att visa/ändra i en jämförelse mellan två.
+  // och skulle vara missvisande att visa/ändra här.
   function compareCard(it) {
     var d = parseDate(it);
     var hasDay = it.date.length >= 10;
@@ -1223,38 +1419,40 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 
   function renderComparePage() {
     var html = '<button class="page-back" id="pageBack">← Tillbaka</button>' +
-      '<h2 class="page-title">Jämför profiler</h2>';
+      '<h2 class="page-title">Matcha profiler</h2>';
 
     if (state.profiles.length < 2) {
       html += '<div class="empty"><p>Behöver minst två profiler</p>' +
-        '<span>Importera en annan profils exportfil under App &amp; Backup för att kunna jämföra.</span></div>';
+        '<span>Dela eller ta emot en delad profil under Profiler &amp; Backup för att kunna matcha.</span></div>';
       document.getElementById("page").innerHTML = html;
       return;
     }
 
-    if (!state.compareA || state.profiles.indexOf(state.compareA) === -1) state.compareA = state.profiles[0];
-    if (!state.compareB || state.profiles.indexOf(state.compareB) === -1) {
-      state.compareB = state.profiles.filter(function (p) { return p !== state.compareA; })[0] || state.profiles[0];
+    if (!state.matchSelected || !state.matchSelected.length) {
+      state.matchSelected = state.profiles.slice(0, MATCH_MAX);
+    } else {
+      state.matchSelected = state.matchSelected.filter(function (p) { return state.profiles.indexOf(p) !== -1; });
+      if (!state.matchSelected.length) state.matchSelected = state.profiles.slice(0, MATCH_MAX);
     }
 
-    html += '<p style="color:var(--dim);font-size:13px;margin:0 0 14px">Visar titlar båda profilerna markerat med ★ Vill se.</p>' +
-      '<div class="compare-pickers">' +
-      profileSelectHtml("compareASelect", state.compareA) +
-      '<span class="compare-vs">×</span>' +
-      profileSelectHtml("compareBSelect", state.compareB) +
-      "</div>";
+    html += '<p style="color:var(--dim);font-size:13px;margin:0 0 10px">Välj upp till fem profiler (' +
+      state.matchSelected.length + '/' + MATCH_MAX + ' valda). Visar titlar en majoritet av de valda markerat med ★ Vill se.</p>' +
+      '<div class="match-pickers">' + state.profiles.map(matchCheckboxHtml).join("") + "</div>";
 
-    if (state.compareA === state.compareB) {
-      html += '<div class="empty"><p>Välj två olika profiler</p><span>Samma profil är vald på båda ställena.</span></div>';
+    if (state.matchSelected.length < 2) {
+      html += '<div class="empty"><p>Välj minst två profiler</p><span></span></div>';
     } else {
-      var common = computeOverlap(state.compareA, state.compareB).sort(newestFirst);
-      if (!common.length) {
-        html += '<div class="empty"><p>Inga gemensamma titlar än</p><span>Inget som både "' +
-          esc(state.compareA) + '" och "' + esc(state.compareB) + '" har markerat med ★ Vill se.</span></div>';
+      var groups = computeMatches(state.matchSelected);
+      if (!groups.length) {
+        html += '<div class="empty"><p>Inga gemensamma titlar än</p>' +
+          '<span>Inget som en majoritet av de valda profilerna har markerat med ★ Vill se.</span></div>';
       } else {
-        html += '<p class="compare-count">' + common.length +
-          (common.length === 1 ? " gemensam titel" : " gemensamma titlar") + "</p>" +
-          common.map(compareCard).join("");
+        html += groups.map(function (g) {
+          return '<p class="compare-count">' + g.count + " av " + state.matchSelected.length +
+            (g.count === state.matchSelected.length ? " – alla" : "") + " vill se (" +
+            g.items.length + (g.items.length === 1 ? " titel" : " titlar") + ")</p>" +
+            g.items.map(compareCard).join("");
+        }).join("");
       }
     }
 
@@ -1354,30 +1552,53 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   function renderBackupPage() {
     var standalone = window.navigator.standalone === true;
     var others = state.profiles.filter(function (p) { return p !== state.activeProfile; });
+    var myShareId = getShareId(state.activeProfile);
+    var amReceived = isReceivedProfile(state.activeProfile);
     var html = '<button class="page-back" id="pageBack">← Tillbaka</button>' +
       '<h2 class="page-title">Profiler &amp; Backup</h2>' +
       (standalone ? '<p class="fetch-status">Aktuell status: Körs som app från hemskärmen</p>' : "") +
 
       '<h3 style="font-family:var(--display);font-size:16px;margin:18px 0 6px">Profil</h3>' +
       '<p style="color:var(--dim);font-size:13px;margin:0 0 10px">Du använder just nu profilen <b style="color:var(--txt)">' +
-      esc(state.activeProfile) + '</b>. Varje profil har sina egna favoriter, betyg, sett-markeringar med mera.</p>' +
+      esc(state.activeProfile) + '</b>' +
+      (amReceived
+        ? ' – <span style="color:var(--sett)">en mottagen, skrivskyddad profil som synkas automatiskt</span>.'
+        : '. Varje profil har sina egna favoriter, betyg, sett-markeringar med mera.') +
+      "</p>" +
       '<div class="backup-link-row">' +
-        '<button class="btn btn-outline" id="renameProfileBtn">Byt namn</button>' +
-        (others.length ? '<button class="btn btn-outline" data-page="compare">Jämför profiler</button>' : "") +
+        (amReceived ? "" : '<button class="btn btn-outline" id="renameProfileBtn">Byt namn</button>') +
+        (others.length ? '<button class="btn btn-outline" data-page="compare">Matcha profiler</button>' : "") +
       "</div>" +
+
+      (amReceived
+        ? ""
+        : '<h3 style="font-family:var(--display);font-size:16px;margin:20px 0 6px">Dela profil</h3>' +
+          '<p style="color:var(--dim);font-size:13px;margin:0 0 10px">' +
+          (cloudReady
+            ? "Delar \"" + esc(state.activeProfile) + "\" via mail, sms eller AirDrop. Mottagaren får en skrivskyddad, automatiskt synkad kopia – allt du ändrar här syns hos dem live."
+            : "Molnsynk är inte konfigurerad i den här installationen ännu.") +
+          "</p>" +
+          '<div class="backup-link-row">' +
+            '<button class="btn" id="shareProfileBtn"' + (cloudReady ? "" : " disabled") + '>📤 Dela profil</button>' +
+          "</div>" +
+          (myShareId ? '<p style="color:var(--sett);font-size:12px;margin:8px 0 0">✓ Den här profilen är delad och uppdateras automatiskt hos mottagaren.</p>' : "")) +
+
+      '<h3 style="font-family:var(--display);font-size:16px;margin:20px 0 6px">Andra profiler</h3>' +
       (others.length
         ? '<div class="profile-list">' + others.map(function (p) {
-            return '<div class="profile-row"><span>' + esc(p) + '</span>' +
+            var received = isReceivedProfile(p);
+            return '<div class="profile-row"><span>' + esc(p) +
+              (received ? ' <span class="match-shared-badge">delad · synkas</span>' : "") + "</span>" +
               '<span class="profile-row-actions">' +
               '<button class="rm-restore" data-switch-profile="' + esc(p) + '">Byt till</button>' +
               '<button class="rm-restore" data-delete-profile="' + esc(p) + '">Ta bort</button>' +
               '</span></div>';
           }).join("") + "</div>"
-        : '<p style="color:var(--dim);font-size:13px">Inga andra profiler sparade än. Importerar du någon annans exportfil under ett nytt namn dyker den upp här.</p>') +
+        : '<p style="color:var(--dim);font-size:13px">Inga andra profiler sparade än. Dela/ta emot en profil, eller importera en exportfil under ett nytt namn, så dyker den upp här.</p>') +
 
       '<h3 style="font-family:var(--display);font-size:16px;margin:20px 0 6px">Säkerhetskopiera</h3>' +
       '<p style="color:var(--dim);font-size:13px;margin:0 0 12px">Exportera sparar favoriter, sett, vill se, sällskap och betyg för <b style="color:var(--txt)">' +
-      esc(state.activeProfile) + '</b> som en fil. Importera läser tillbaka en fil och frågar vilket profilnamn den hör till – skriver över den profilen om namnet redan finns, annars läggs den till som en ny.</p>' +
+      esc(state.activeProfile) + '</b> som en fil – en engångsögonblicksbild, till skillnad från Dela profil ovan som håller sig uppdaterad. Importera läser tillbaka en fil och frågar vilket profilnamn den hör till.</p>' +
       '<div class="backup-link-row">' +
         '<button class="btn" id="exportBtn">⬇️ Exportera</button>' +
         '<button class="btn btn-outline" id="importBtn">⬆️ Importera</button>' +
@@ -1466,14 +1687,15 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     // Sällskapsfilter visas bara i Vill se-fliken.
     var whoEl = document.getElementById("whoRow");
     if (state.tab === "villse") {
+      var whoOptionsForFilter = getWhoOptions();
       var counts = {};
-      WHO_OPTIONS.forEach(function (w) { counts[w.id] = 0; });
+      whoOptionsForFilter.forEach(function (w) { counts[w.id] = 0; });
       state.wantToSee.forEach(function (k) {
         var w = state.wantWho[k];
         if (w && counts[w] !== undefined) counts[w]++;
       });
       var rows = [["", "Alla", state.wantToSee.length]].concat(
-        WHO_OPTIONS.map(function (w) { return [w.id, w.label, counts[w.id]]; })
+        whoOptionsForFilter.map(function (w) { return [w.id, w.label, counts[w.id]]; })
       );
       whoEl.innerHTML = '<span class="who-lbl">Se med:</span>' +
         rows
@@ -1650,24 +1872,29 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     }
 
     if (t.dataset.fav) {
+      if (isReceivedProfile(state.activeProfile)) return;
       var k = t.dataset.fav;
       state.favorites = state.favorites.indexOf(k) !== -1
         ? state.favorites.filter(function (f) { return f !== k; })
         : [k].concat(state.favorites);
       store.set(FAV_KEY(), state.favorites);
+      maybePushActiveProfileToCloud();
       render(); return;
     }
 
     if (t.dataset.watch) {
+      if (isReceivedProfile(state.activeProfile)) return;
       var wk = t.dataset.watch;
       state.watched = state.watched.indexOf(wk) !== -1
         ? state.watched.filter(function (w) { return w !== wk; })
         : [wk].concat(state.watched);
       store.set(WATCHED_KEY(), state.watched);
+      maybePushActiveProfileToCloud();
       drawAll(); render(); return;
     }
 
     if (t.dataset.want) {
+      if (isReceivedProfile(state.activeProfile)) return;
       var vk = t.dataset.want;
       if (state.wantToSee.indexOf(vk) !== -1) {
         state.wantToSee = state.wantToSee.filter(function (w) { return w !== vk; });
@@ -1677,6 +1904,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
         state.wantToSee = [vk].concat(state.wantToSee);
       }
       store.set(WANT_KEY(), state.wantToSee);
+      maybePushActiveProfileToCloud();
       drawAll(); render(); return;
     }
 
@@ -1725,6 +1953,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     }
     if (t.dataset.switchProfile) { switchProfile(t.dataset.switchProfile, true); return; }
     if (t.dataset.deleteProfile) { deleteProfile(t.dataset.deleteProfile); return; }
+    if (t.id === "shareProfileBtn") { shareActiveProfile(); return; }
     if (t.id === "importBtn") { document.getElementById("importFile").click(); return; }
   });
 
@@ -1779,26 +2008,39 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       return;
     }
 
-    if (t.id === "compareASelect") { state.compareA = t.value; renderComparePage(); return; }
-    if (t.id === "compareBSelect") { state.compareB = t.value; renderComparePage(); return; }
+    if (t.dataset.matchcheck !== undefined && t.hasAttribute("data-matchcheck")) {
+      var mp = t.dataset.matchcheck;
+      var idx = state.matchSelected.indexOf(mp);
+      if (t.checked && idx === -1) {
+        if (state.matchSelected.length < MATCH_MAX) state.matchSelected.push(mp);
+      } else if (!t.checked && idx !== -1) {
+        state.matchSelected.splice(idx, 1);
+      }
+      renderComparePage();
+      return;
+    }
 
     if (!t.classList) return;
 
     if (t.classList.contains("rate-sel")) {
+      if (isReceivedProfile(state.activeProfile)) return;
       var k = t.dataset.rate;
       var v = t.value;
       if (v) state.ratings[k] = parseInt(v, 10);
       else delete state.ratings[k];
       store.set(RATING_KEY(), state.ratings);
+      maybePushActiveProfileToCloud();
       render();
       return;
     }
 
     if (t.classList.contains("who-sel")) {
+      if (isReceivedProfile(state.activeProfile)) return;
       var wk = t.dataset.whoset;
       if (t.value) state.wantWho[wk] = t.value;
       else delete state.wantWho[wk];
       store.set(WANTWHO_KEY(), state.wantWho);
+      maybePushActiveProfileToCloud();
       render();
     }
   });
@@ -1845,6 +2087,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       populateFromData(data);
       drawAll();
       render();
+      resubscribeAllReceived();
+      checkIncomingShare();
     })
     .catch(function (err) {
       document.getElementById("list").innerHTML =
