@@ -1367,7 +1367,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     return normalizeKeys(store.get(BASE_WANT + ":" + profileName));
   }
 
-  var MATCH_MAX = 5;
+  var MATCH_MAX = 10;
 
   // Räknar för varje titel hur många av de valda profilerna som vill se
   // den, och grupperar efter antal (flest röster först). Visar bara
@@ -1457,7 +1457,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       if (!state.matchSelected.length) state.matchSelected = state.profiles.slice(0, MATCH_MAX);
     }
 
-    html += '<p style="color:var(--dim);font-size:13px;margin:0 0 10px">Välj upp till fem profiler (' +
+    html += '<p style="color:var(--dim);font-size:13px;margin:0 0 10px">Välj upp till tio profiler (' +
       state.matchSelected.length + '/' + MATCH_MAX + ' valda). Visar titlar en majoritet av de valda markerat med ★ Vill se.</p>' +
       '<div class="match-pickers">' + state.profiles.map(matchCheckboxHtml).join("") + "</div>";
 
