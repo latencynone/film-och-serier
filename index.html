@@ -274,7 +274,10 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 .desc{font-size:14px;line-height:1.55;color:var(--desc);margin:8px 0 0}
 .actions{display:flex;gap:8px;flex-shrink:0}
 .heart:disabled,.watch:disabled,.trash:disabled,.star:disabled,
-.rate-sel:disabled,.who-sel:disabled{opacity:.4;cursor:not-allowed}
+.rate-sel:disabled,.who-sel:disabled{
+  opacity:.35;cursor:not-allowed;filter:grayscale(1);
+  background:rgba(128,128,128,.1)!important;border-color:var(--line)!important;
+}
 .heart,.watch,.trash,.star{background:none;border:1px solid var(--line);color:var(--dim);cursor:pointer;
   width:44px;height:44px;flex:0 0 44px;font-size:19px;line-height:1;transition:.16s;border-radius:var(--radius)}
 .heart[data-on="1"]{color:var(--fav);border-color:var(--fav);background:rgba(255,127,154,.12)}
@@ -311,6 +314,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 .empty p{margin:0 0 6px;font-family:var(--display);font-size:18px;letter-spacing:.05em;text-transform:uppercase}
 .empty span{font-size:13px;color:var(--dim)}
 .pager-top{text-align:right;margin:-4px 0 10px}
+.readonly-banner{font-size:13px;color:var(--sett);background:color-mix(in srgb, var(--sett) 12%, transparent);
+  border:1px solid var(--sett);border-radius:var(--radius);padding:10px 14px;margin:0 0 14px}
 .pager-top:empty{display:none}
 .pager-top .pager-info{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.05em}
 .pager{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0 20px}
@@ -577,6 +582,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 
   <div id="page"></div>
 
+  <div id="readonlyBanner"></div>
   <div class="pager-top" id="pagerTop"></div>
 
   <div id="list"></div>
@@ -858,17 +864,27 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       alert("Det namnet används redan av en annan profil.");
       return;
     }
+    var oldName = ACTIVE_PROFILE;
     PROFILE_BASE_KEYS.forEach(function (base) {
-      var v = store.get(base + ":" + ACTIVE_PROFILE);
+      var v = store.get(base + ":" + oldName);
       if (v !== null) store.set(base + ":" + newName, v);
-      store.remove(base + ":" + ACTIVE_PROFILE);
+      store.remove(base + ":" + oldName);
     });
-    var idx = state.profiles.indexOf(ACTIVE_PROFILE);
+    // Flytta med ett eventuellt delnings-ID, annars tappar profilen
+    // sin molnsynk tyst (appen skulle leta efter ett ID under det NYA
+    // namnet och inte hitta något).
+    var shareId = getShareId(oldName);
+    if (shareId) {
+      store.set("tipstablan:shareid:" + newName, shareId);
+      store.remove("tipstablan:shareid:" + oldName);
+    }
+    var idx = state.profiles.indexOf(oldName);
     if (idx !== -1) state.profiles[idx] = newName;
     store.set(PROFILES_KEY, state.profiles);
     ACTIVE_PROFILE = newName;
     state.activeProfile = newName;
     store.set(ACTIVE_PROFILE_KEY, newName);
+    if (shareId) pushProfileToCloud(newName, shareId); // uppdaterar namnet hos mottagaren också
     render();
   }
 
@@ -993,6 +1009,12 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       return store.get("tipstablan:received-shareid:" + p) === shareId;
     });
     if (already) return;
+
+    var isOwnShare = state.profiles.some(function (p) { return getShareId(p) === shareId; });
+    if (isOwnShare) {
+      alert("Det här är din egen delade profil – inget att ta emot.");
+      return;
+    }
 
     var displayName = sharedName;
     if (state.profiles.indexOf(displayName) !== -1) displayName = sharedName + " (delad)";
@@ -1644,6 +1666,10 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     document.getElementById("foot").style.display = isPage ? "none" : "";
     document.getElementById("whoRow").innerHTML = "";
     document.getElementById("kindRow").innerHTML = "";
+    var roBanner = document.getElementById("readonlyBanner");
+    roBanner.innerHTML = (!isPage && isReceivedProfile(state.activeProfile))
+      ? '<p class="readonly-banner">👁 Visar <b>' + esc(state.activeProfile) + '</b>s profil – skrivskyddad, synkas automatiskt</p>'
+      : "";
     var menuCount = document.getElementById("menuRemovedCount");
     if (menuCount) menuCount.textContent = "(" + state.removed.length + ")";
     document.getElementById("foot").innerHTML =
