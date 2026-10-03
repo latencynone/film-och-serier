@@ -382,21 +382,30 @@ def build_entry(item, media_type, service_name):
         "poster": omdb["poster"],
         "upcomingSeason": upcoming_season,
         "nextEpisode": next_episode,
+        "totalSeasons": omdb["seasons"] if media_type == "tv" else None,
         "kind": kind,
     }
 
 
 def omdb_lookup_by_id(imdb_id):
     """Exakt uppslag via IMDb-ID, utan titel/år-gissning - används för att
-    fylla i affischbilder på titlar som redan finns men saknar en."""
+    fylla i affischbilder och säsongsantal på titlar som redan finns men
+    saknar dem. Returnerar {"poster": str, "seasons": int|None} eller None
+    om uppslaget helt misslyckades."""
     url = "https://www.omdbapi.com/?apikey=%s&i=%s" % (OMDB_KEY, imdb_id)
     data = http_get_json(url)
     if not data or data.get("Response") == "False":
         return None
     poster = data.get("Poster", "")
     if not poster or poster == "N/A":
-        return None
-    return poster
+        poster = ""
+    seasons = None
+    if data.get("totalSeasons") and data["totalSeasons"] not in ("N/A", None):
+        try:
+            seasons = int(data["totalSeasons"])
+        except ValueError:
+            pass
+    return {"poster": poster, "seasons": seasons}
 
 
 def entry_score(x):
@@ -452,19 +461,32 @@ def main():
     added = {"film": [], "serie": []}
     upgraded = 0
 
-    # Backfill: fyll i affischbilder på titlar som redan finns men lades in
-    # innan poster-fältet fanns. Exakt uppslag per IMDb-ID, skonsamt mot
-    # OMDb:s gratisgräns (163 titlar ryms gott och väl inom 1000/dag).
-    missing_poster = [it for it in by_id.values() if not it.get("poster")]
-    if missing_poster:
-        print("Fyller i affischbilder för %d titlar utan en sedan tidigare..." % len(missing_poster))
-        for it in missing_poster:
-            poster = omdb_lookup_by_id(it["id"])
+    # Backfill: fyll i affischbilder och/eller totalt säsongsantal på
+    # titlar som redan finns men saknar dem (poster: lades in innan det
+    # fältet fanns; totalSeasons: nytt fält för säsongsframsteg). Samma
+    # IMDb-ID-uppslag ger båda, så de körs i ett gemensamt pass - skonsamt
+    # mot OMDb:s gratisgräns (163 titlar ryms gott och väl inom 1000/dag).
+    needs_omdb_backfill = [
+        it for it in by_id.values()
+        if not it.get("poster") or (it.get("kind") == "serie" and "totalSeasons" not in it)
+    ]
+    if needs_omdb_backfill:
+        print("Fyller i affisch/säsongsantal för %d titlar som saknar dem..." % len(needs_omdb_backfill))
+        for it in needs_omdb_backfill:
+            result = omdb_lookup_by_id(it["id"])
             time.sleep(0.15)
-            if poster:
-                it["poster"] = poster
+            if not result:
+                continue
+            changed = False
+            if result["poster"] and not it.get("poster"):
+                it["poster"] = result["poster"]
+                changed = True
+            if it.get("kind") == "serie" and "totalSeasons" not in it:
+                it["totalSeasons"] = result["seasons"]  # kan vara None, det är okej
+                changed = True
+            if changed:
                 upgraded += 1
-                print("  ~ affisch: %s" % it["title"])
+                print("  ~ affisch/säsonger: %s" % it["title"])
 
     # Backfill: laga beskrivningar som klipptes av mitt i en mening av den
     # gamla koden, innan truncate_to_sentence fanns. Går via en titel/år-
@@ -546,6 +568,9 @@ def main():
                         refreshed = True
                     if "upcomingSeason" in entry and entry["upcomingSeason"] != old.get("upcomingSeason"):
                         old["upcomingSeason"] = entry["upcomingSeason"]
+                        refreshed = True
+                    if entry.get("totalSeasons") and entry["totalSeasons"] != old.get("totalSeasons"):
+                        old["totalSeasons"] = entry["totalSeasons"]
                         refreshed = True
                     if entry_score(entry) > entry_score(old):
                         old["imdb"], old["rt"], old["mc"] = entry["imdb"], entry["rt"], entry["mc"]
