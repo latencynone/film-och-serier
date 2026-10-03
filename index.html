@@ -553,6 +553,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   </div>
   <button data-page="backup">Profiler &amp; Backup</button>
   <button data-page="removed">Borttagna <span id="menuRemovedCount"></span></button>
+  <button data-page="lists">Mina listor</button>
   <button data-page="history">Historik &amp; Logg</button>
   <button data-page="info">Info &amp; förklaring</button>
 </div>
@@ -673,7 +674,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   var BASE_REMOVED = "tipstablan:borttagna";
   var BASE_RATING = "tipstablan:betyg";
   var BASE_PROGRESS = "tipstablan:sasongsframsteg";
-  var PROFILE_BASE_KEYS = [BASE_FAV, BASE_WATCHED, BASE_WANT, BASE_WANTWHO, BASE_REMOVED, BASE_RATING, BASE_PROGRESS];
+  var BASE_LISTS = "tipstablan:listor";
+  var PROFILE_BASE_KEYS = [BASE_FAV, BASE_WATCHED, BASE_WANT, BASE_WANTWHO, BASE_REMOVED, BASE_RATING, BASE_PROGRESS, BASE_LISTS];
 
   // Körs en gång: om appen aldrig haft profiler men det finns gammal,
   // o-namnrymd data (från innan den här funktionen fanns), flyttas den
@@ -712,6 +714,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   function REMOVED_KEY() { return nsKey(BASE_REMOVED); }
   function RATING_KEY() { return nsKey(BASE_RATING); }
   function PROGRESS_KEY() { return nsKey(BASE_PROGRESS); }
+  function LISTS_KEY() { return nsKey(BASE_LISTS); }
 
   // Sällskapsalternativ för Vill se. De tre första är alltid med; därtill
   // läggs namnet på varje profil du tagit emot via delning (se getWhoOptions).
@@ -842,6 +845,9 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     removed: normalizeKeys(store.get(REMOVED_KEY())),
     ratings: store.get(RATING_KEY()) || {},
     seasonProgress: store.get(PROGRESS_KEY()) || {},
+    lists: store.get(LISTS_KEY()) || {},
+    viewingList: "",
+    expandedLists: {},
     returnTab: "film",
     expanded: {},
     expandedProgress: {},
@@ -860,6 +866,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     state.removed = normalizeKeys(store.get(REMOVED_KEY()));
     state.ratings = store.get(RATING_KEY()) || {};
     state.seasonProgress = store.get(PROGRESS_KEY()) || {};
+    state.lists = store.get(LISTS_KEY()) || {};
   }
 
   function closeMenu() {
@@ -867,6 +874,53 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     document.getElementById("menuBtn").setAttribute("aria-expanded", "false");
     document.getElementById("themeOptions").hidden = true;
     document.getElementById("themeToggle").setAttribute("aria-expanded", "false");
+  }
+
+  /* ============ Egna listor ============ */
+
+  function saveLists() {
+    store.set(LISTS_KEY(), state.lists);
+    maybePushActiveProfileToCloud();
+  }
+
+  function createList(name) {
+    name = (name || "").trim().slice(0, 40);
+    if (!name) return false;
+    if (state.lists.hasOwnProperty(name)) {
+      alert("Du har redan en lista som heter \"" + name + "\".");
+      return false;
+    }
+    state.lists[name] = [];
+    saveLists();
+    return true;
+  }
+
+  function renameList(oldName, newName) {
+    newName = (newName || "").trim().slice(0, 40);
+    if (!newName || newName === oldName) return;
+    if (state.lists.hasOwnProperty(newName)) {
+      alert("Du har redan en lista som heter \"" + newName + "\".");
+      return;
+    }
+    state.lists[newName] = state.lists[oldName];
+    delete state.lists[oldName];
+    if (state.viewingList === oldName) state.viewingList = newName;
+    saveLists();
+  }
+
+  function deleteList(name) {
+    if (!confirm("Ta bort listan \"" + name + "\"? Titlarna själva påverkas inte, bara listan.")) return;
+    delete state.lists[name];
+    saveLists();
+  }
+
+  function toggleListMembership(listName, key) {
+    var members = state.lists[listName] || [];
+    var idx = members.indexOf(key);
+    if (idx === -1) members.push(key);
+    else members.splice(idx, 1);
+    state.lists[listName] = members;
+    saveLists();
   }
 
   function markProfileSeen(name) {
@@ -991,6 +1045,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       who: store.get(BASE_WANTWHO + ":" + profileName) || {},
       ratings: store.get(BASE_RATING + ":" + profileName) || {},
       progress: store.get(BASE_PROGRESS + ":" + profileName) || {},
+      lists: store.get(BASE_LISTS + ":" + profileName) || {},
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }).catch(function () { /* nätverksfel etc - försöker igen vid nästa ändring */ });
   }
@@ -1037,6 +1092,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
         store.set(BASE_WANTWHO + ":" + profileName, data.who || {});
         store.set(BASE_RATING + ":" + profileName, data.ratings || {});
         store.set(BASE_PROGRESS + ":" + profileName, data.progress || {});
+        store.set(BASE_LISTS + ":" + profileName, data.lists || {});
         if (state.activeProfile === profileName) { loadProfileData(); drawAll(); }
         render();
       }, function () { /* tappad anslutning - localStorage har senast kända data kvar */ });
@@ -1076,7 +1132,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     db.collection("profiles").doc(shareId).get().then(function (doc) {
       if (!doc.exists) { alert("Hittade ingen delad profil med den länken."); return; }
       var data = doc.data();
-      applyBackupObj({ fav: data.fav, watched: data.watched, want: data.want, who: data.who, ratings: data.ratings, progress: data.progress }, displayName);
+      applyBackupObj({ fav: data.fav, watched: data.watched, want: data.want, who: data.who, ratings: data.ratings, progress: data.progress, lists: data.lists }, displayName);
       store.set("tipstablan:received-shareid:" + displayName, shareId);
       markProfileSeen(displayName);
       subscribeToSharedProfile(displayName, shareId);
@@ -1099,7 +1155,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       profileName: state.activeProfile,
       fav: state.favorites, watched: state.watched, want: state.wantToSee,
       who: state.wantWho, removed: state.removed, ratings: state.ratings,
-      progress: state.seasonProgress
+      progress: state.seasonProgress, lists: state.lists
     };
   }
 
@@ -1135,6 +1191,9 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     var progress = sanitizeObj(b.progress, function (v) {
       return typeof v === "number" && v >= 0 && v <= 100;
     });
+    var rawLists = sanitizeObj(b.lists, function (v) { return Array.isArray(v); });
+    var lists = {};
+    Object.keys(rawLists).forEach(function (name) { lists[name] = normalizeKeys(rawLists[name]); });
 
     store.set(BASE_FAV + ":" + targetProfile, favorites);
     store.set(BASE_WATCHED + ":" + targetProfile, watched);
@@ -1143,6 +1202,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     store.set(BASE_REMOVED + ":" + targetProfile, removed);
     store.set(BASE_RATING + ":" + targetProfile, ratings);
     store.set(BASE_PROGRESS + ":" + targetProfile, progress);
+    store.set(BASE_LISTS + ":" + targetProfile, lists);
 
     if (state.profiles.indexOf(targetProfile) === -1) {
       state.profiles.push(targetProfile);
@@ -1447,6 +1507,22 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
               "</div>";
           })()
         : "") +
+      (function () {
+            var listNames = Object.keys(state.lists).sort(function (a, b) { return a.localeCompare(b, "sv"); });
+            if (!listNames.length) return "";
+            var myLists = listNames.filter(function (name) { return (state.lists[name] || []).indexOf(k) !== -1; });
+            var isOpenL = !!state.expandedLists[k];
+            var hintL = myLists.length ? " (" + myLists.map(esc).join(", ") + ")" : "";
+            return '<button class="more-tog" data-listtog="' + esc(k) + '" aria-expanded="' + isOpenL + '">' +
+              (isOpenL ? "Mindre ▲" : "Listor" + hintL + " ▾") + "</button>" +
+              '<div class="more-row"' + (isOpenL ? "" : " hidden") + ">" +
+              '<div class="match-pickers">' + listNames.map(function (name) {
+                var inList = myLists.indexOf(name) !== -1;
+                return '<label class="match-check' + (dis ? " is-disabled" : "") + '">' +
+                  '<input type="checkbox" data-listcheck="' + esc(name) + '" data-listkey="' + esc(k) + '"' +
+                  (inList ? " checked" : "") + dis + '><span>' + esc(name) + "</span></label>";
+              }).join("") + "</div></div>";
+          })() +
       upcomingSeasonHtml(it) +
       '<p class="desc">' + esc(it.desc) + "</p></div></article>";
   }
@@ -1750,6 +1826,58 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     document.getElementById("page").innerHTML = html;
   }
 
+  function renderListsPage() {
+    var readOnly = isReceivedProfile(state.activeProfile);
+    var html = '<button class="page-back" id="pageBack">← Tillbaka</button>' +
+      '<h2 class="page-title">Mina listor</h2>' +
+      '<p style="color:var(--dim);font-size:13px;margin:0 0 14px">Egna samlingar, t.ex. "Julfilmer" eller "Regnig söndag". Lägg till titlar via Listor-fliken på varje kort.</p>';
+
+    if (!readOnly) {
+      html += '<div class="backup-link-row">' +
+        '<input type="text" id="newListInput" placeholder="Ny lista…" maxlength="40" ' +
+        'style="flex:1 1 180px;background:var(--panel);border:1px solid var(--line);color:var(--txt);' +
+        'border-radius:var(--radius);padding:10px 12px;font-family:var(--body);font-size:14px">' +
+        '<button class="btn" id="createListBtn">+ Skapa</button>' +
+        "</div>";
+    }
+
+    var names = Object.keys(state.lists).sort(function (a, b) { return a.localeCompare(b, "sv"); });
+    if (!names.length) {
+      html += '<div class="empty"><p>Inga listor än</p><span>' +
+        (readOnly ? "" : "Skapa en ovan för att komma igång.") + "</span></div>";
+    } else {
+      html += '<div class="profile-list">' + names.map(function (name) {
+        var count = state.lists[name].length;
+        return '<div class="profile-row"><span>' + esc(name) + ' <span class="match-shared-badge">' +
+          count + (count === 1 ? " titel" : " titlar") + "</span></span>" +
+          '<span class="profile-row-actions">' +
+          '<button class="rm-restore" data-viewlist="' + esc(name) + '">Visa</button>' +
+          (readOnly ? "" :
+            '<button class="rm-restore" data-renamelist="' + esc(name) + '">Byt namn</button>' +
+            '<button class="rm-restore" data-deletelist="' + esc(name) + '">Ta bort</button>') +
+          "</span></div>";
+      }).join("") + "</div>";
+    }
+    document.getElementById("page").innerHTML = html;
+  }
+
+  function renderListViewPage() {
+    var name = state.viewingList;
+    var html = '<button class="page-back" id="pageBack">← Tillbaka</button>' +
+      '<h2 class="page-title">' + esc(name) + "</h2>";
+
+    var members = state.lists[name] || [];
+    var items = members.map(function (k) { return BY_KEY[k]; }).filter(Boolean).sort(newestFirst);
+    if (!items.length) {
+      html += '<div class="empty"><p>Listan är tom</p><span>Lägg till titlar via Listor-fliken på ett kort.</span></div>';
+    } else {
+      html += '<p style="color:var(--dim);font-size:13px;margin:0 0 14px">' + items.length +
+        (items.length === 1 ? " titel" : " titlar") + "</p>" +
+        items.map(function (it, i) { return card(it, i); }).join("");
+    }
+    document.getElementById("page").innerHTML = html;
+  }
+
   function renderRandomPage() {
     var html = '<button class="page-back" id="pageBack">← Tillbaka</button>' +
       '<h2 class="page-title">🎲 Vet inte vad jag vill se?</h2>';
@@ -1790,7 +1918,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   }
 
   function render() {
-    var isPage = state.tab === "backup" || state.tab === "removed" || state.tab === "info" || state.tab === "compare" || state.tab === "history" || state.tab === "random";
+    var isPage = state.tab === "backup" || state.tab === "removed" || state.tab === "info" || state.tab === "compare" || state.tab === "history" || state.tab === "random" || state.tab === "lists" || state.tab === "listview";
     document.getElementById("tabs").style.display = isPage ? "none" : "";
     document.querySelector(".search-row").style.display = isPage ? "none" : "";
     document.querySelector(".ctrl").style.display = isPage ? "none" : "";
@@ -1818,6 +1946,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       else if (state.tab === "compare") renderComparePage();
       else if (state.tab === "history") renderHistoryPage();
       else if (state.tab === "random") renderRandomPage();
+      else if (state.tab === "lists") renderListsPage();
+      else if (state.tab === "listview") renderListViewPage();
       else renderRemovedPage();
       return;
     }
@@ -2027,6 +2157,13 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       return;
     }
 
+    if (t.dataset.listtog) {
+      var lk = t.dataset.listtog;
+      state.expandedLists[lk] = !state.expandedLists[lk];
+      render();
+      return;
+    }
+
     if (t.dataset.posterToggle) {
       var pk = t.dataset.posterToggle;
       state.posterExpanded[pk] = !state.posterExpanded[pk];
@@ -2147,6 +2284,30 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     if (t.dataset.switchProfile) { switchProfile(t.dataset.switchProfile, true); return; }
     if (t.dataset.deleteProfile) { deleteProfile(t.dataset.deleteProfile); return; }
     if (t.id === "shareProfileBtn") { shareActiveProfile(); return; }
+
+    if (t.id === "createListBtn") {
+      var inputEl = document.getElementById("newListInput");
+      if (createList(inputEl.value)) render();
+      return;
+    }
+
+    if (t.dataset.viewlist) {
+      state.viewingList = t.dataset.viewlist;
+      state.returnTab = "lists";
+      state.tab = "listview";
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    if (t.dataset.renamelist) {
+      var newListName = prompt("Nytt namn på listan \"" + t.dataset.renamelist + "\":", t.dataset.renamelist);
+      if (newListName !== null) renameList(t.dataset.renamelist, newListName);
+      render();
+      return;
+    }
+
+    if (t.dataset.deletelist) { deleteList(t.dataset.deletelist); render(); return; }
     if (t.id === "importBtn") { document.getElementById("importFile").click(); return; }
   });
 
@@ -2241,6 +2402,13 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       store.set(WANTWHO_KEY(), state.wantWho);
       maybePushActiveProfileToCloud();
       render();
+    }
+
+    if (t.dataset.listcheck !== undefined && t.hasAttribute("data-listcheck")) {
+      if (isReceivedProfile(state.activeProfile)) return;
+      toggleListMembership(t.dataset.listcheck, t.dataset.listkey);
+      render();
+      return;
     }
 
     if (t.classList.contains("progress-sel")) {
