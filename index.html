@@ -126,13 +126,16 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 .kind-row{background:var(--panel);border-radius:var(--radius)}
 .chip[data-kindfilter="film"][data-on="1"]{background:var(--film);border-color:var(--film);color:var(--on-accent)}
 .chip[data-kindfilter="serie"][data-on="1"]{background:var(--serie);border-color:var(--serie);color:var(--on-accent)}
-.who-sel{background:transparent;border:1px solid var(--line);color:var(--want);
+.who-sel,.progress-sel{background:transparent;border:1px solid var(--line);color:var(--want);
   font-family:var(--mono);font-size:11px;font-weight:700;padding:10px 8px;min-height:44px;
   border-radius:var(--radius);-webkit-appearance:none;appearance:none;cursor:pointer}
+.progress-sel{color:var(--sett)}
 @media (hover: hover) and (pointer: fine){
   .who-sel:hover{border-color:var(--want)}
+  .progress-sel:hover{border-color:var(--sett)}
 }
 .who-sel[data-set="1"]{border-color:var(--want);background:color-mix(in srgb, var(--want) 14%, transparent)}
+.progress-sel[data-set="1"]{border-color:var(--sett);background:color-mix(in srgb, var(--sett) 14%, transparent)}
 .who-sel:focus-visible{outline:2px solid var(--film);outline-offset:2px}
 
 .tabs{display:flex;gap:2px;margin:16px 0 12px}
@@ -280,7 +283,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 .desc{font-size:14px;line-height:1.55;color:var(--desc);margin:8px 0 0}
 .actions{display:flex;gap:8px;flex-shrink:0}
 .heart:disabled,.watch:disabled,.trash:disabled,.star:disabled,
-.rate-sel:disabled,.who-sel:disabled{
+.rate-sel:disabled,.who-sel:disabled,.progress-sel:disabled{
   opacity:.35;cursor:not-allowed;filter:grayscale(1);
   background:rgba(128,128,128,.1)!important;border-color:var(--line)!important;
 }
@@ -490,6 +493,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 [data-theme="soft"] .item .more-tog{ color:#5C5C61; }
 [data-theme="soft"] .upcoming-season{ color:#146B27; }
 [data-theme="soft"] .match-added{ color:#146B27; }
+[data-theme="soft"] .progress-sel{ color:#146B27; }
+[data-theme="soft"] .progress-sel[data-set="1"]{ border-color:#146B27; }
 [data-theme="soft"] .upcoming-today{ color:#A4141A; }
 [data-theme="soft"] .title{ font-weight:600; }
 [data-theme="soft"] .heart,[data-theme="soft"] .watch,
@@ -667,7 +672,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   var BASE_WANTWHO = "tipstablan:vill-se-sallskap";
   var BASE_REMOVED = "tipstablan:borttagna";
   var BASE_RATING = "tipstablan:betyg";
-  var PROFILE_BASE_KEYS = [BASE_FAV, BASE_WATCHED, BASE_WANT, BASE_WANTWHO, BASE_REMOVED, BASE_RATING];
+  var BASE_PROGRESS = "tipstablan:sasongsframsteg";
+  var PROFILE_BASE_KEYS = [BASE_FAV, BASE_WATCHED, BASE_WANT, BASE_WANTWHO, BASE_REMOVED, BASE_RATING, BASE_PROGRESS];
 
   // Körs en gång: om appen aldrig haft profiler men det finns gammal,
   // o-namnrymd data (från innan den här funktionen fanns), flyttas den
@@ -705,6 +711,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   function WANTWHO_KEY() { return nsKey(BASE_WANTWHO); }
   function REMOVED_KEY() { return nsKey(BASE_REMOVED); }
   function RATING_KEY() { return nsKey(BASE_RATING); }
+  function PROGRESS_KEY() { return nsKey(BASE_PROGRESS); }
 
   // Sällskapsalternativ för Vill se. De tre första är alltid med; därtill
   // läggs namnet på varje profil du tagit emot via delning (se getWhoOptions).
@@ -834,8 +841,10 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     sort: "datum",
     removed: normalizeKeys(store.get(REMOVED_KEY())),
     ratings: store.get(RATING_KEY()) || {},
+    seasonProgress: store.get(PROGRESS_KEY()) || {},
     returnTab: "film",
     expanded: {},
+    expandedProgress: {},
     posterExpanded: {},
     search: "",
     shown: { film: [], serie: [] }
@@ -850,6 +859,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     state.wantWho = store.get(WANTWHO_KEY()) || {};
     state.removed = normalizeKeys(store.get(REMOVED_KEY()));
     state.ratings = store.get(RATING_KEY()) || {};
+    state.seasonProgress = store.get(PROGRESS_KEY()) || {};
   }
 
   function closeMenu() {
@@ -980,6 +990,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       want: store.get(BASE_WANT + ":" + profileName) || [],
       who: store.get(BASE_WANTWHO + ":" + profileName) || {},
       ratings: store.get(BASE_RATING + ":" + profileName) || {},
+      progress: store.get(BASE_PROGRESS + ":" + profileName) || {},
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }).catch(function () { /* nätverksfel etc - försöker igen vid nästa ändring */ });
   }
@@ -1025,6 +1036,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
         store.set(BASE_WANT + ":" + profileName, normalizeKeys(data.want));
         store.set(BASE_WANTWHO + ":" + profileName, data.who || {});
         store.set(BASE_RATING + ":" + profileName, data.ratings || {});
+        store.set(BASE_PROGRESS + ":" + profileName, data.progress || {});
         if (state.activeProfile === profileName) { loadProfileData(); drawAll(); }
         render();
       }, function () { /* tappad anslutning - localStorage har senast kända data kvar */ });
@@ -1064,7 +1076,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     db.collection("profiles").doc(shareId).get().then(function (doc) {
       if (!doc.exists) { alert("Hittade ingen delad profil med den länken."); return; }
       var data = doc.data();
-      applyBackupObj({ fav: data.fav, watched: data.watched, want: data.want, who: data.who, ratings: data.ratings }, displayName);
+      applyBackupObj({ fav: data.fav, watched: data.watched, want: data.want, who: data.who, ratings: data.ratings, progress: data.progress }, displayName);
       store.set("tipstablan:received-shareid:" + displayName, shareId);
       markProfileSeen(displayName);
       subscribeToSharedProfile(displayName, shareId);
@@ -1086,7 +1098,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     return {
       profileName: state.activeProfile,
       fav: state.favorites, watched: state.watched, want: state.wantToSee,
-      who: state.wantWho, removed: state.removed, ratings: state.ratings
+      who: state.wantWho, removed: state.removed, ratings: state.ratings,
+      progress: state.seasonProgress
     };
   }
 
@@ -1119,6 +1132,9 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     var ratings = sanitizeObj(b.ratings, function (v) {
       return typeof v === "number" && v >= 1 && v <= 10;
     });
+    var progress = sanitizeObj(b.progress, function (v) {
+      return typeof v === "number" && v >= 0 && v <= 100;
+    });
 
     store.set(BASE_FAV + ":" + targetProfile, favorites);
     store.set(BASE_WATCHED + ":" + targetProfile, watched);
@@ -1126,6 +1142,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     store.set(BASE_WANTWHO + ":" + targetProfile, wantWho);
     store.set(BASE_REMOVED + ":" + targetProfile, removed);
     store.set(BASE_RATING + ":" + targetProfile, ratings);
+    store.set(BASE_PROGRESS + ":" + targetProfile, progress);
 
     if (state.profiles.indexOf(targetProfile) === -1) {
       state.profiles.push(targetProfile);
@@ -1334,6 +1351,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     var k = keyOf(it);
     var myRating = state.ratings[k] || "";
     var myWho = state.wantWho[k] || "";
+    var myProgress = state.seasonProgress[k] || 0;
     var readOnly = isReceivedProfile(state.activeProfile);
     var dis = readOnly ? " disabled" : "";
     var rateOpts = '<option value="">Betygsätt</option>';
@@ -1407,6 +1425,25 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
                 return '<option value="' + w.id + '"' +
                   (myWho === w.id ? " selected" : "") + ">" + esc(w.label) + "</option>";
               }).join("") + "</select>" +
+              "</div>";
+          })()
+        : "") +
+      (it.kind === "serie" && it.totalSeasons
+        ? (function () {
+            var isOpenP = !!state.expandedProgress[k];
+            var hintP = myProgress > 0
+              ? (myProgress >= it.totalSeasons ? " (klar)" : " (säsong " + myProgress + " av " + it.totalSeasons + ")")
+              : "";
+            var opts = '<option value="0"' + (myProgress === 0 ? " selected" : "") + ">Inte börjat</option>";
+            for (var sN = 1; sN <= it.totalSeasons; sN++) {
+              opts += '<option value="' + sN + '"' + (myProgress === sN ? " selected" : "") + ">" +
+                (sN === it.totalSeasons ? "Säsong " + sN + " (klar)" : "Säsong " + sN) + "</option>";
+            }
+            return '<button class="more-tog" data-progresstog="' + esc(k) + '" aria-expanded="' + isOpenP + '">' +
+              (isOpenP ? "Mindre ▲" : "Framsteg" + hintP + " ▾") + "</button>" +
+              '<div class="more-row"' + (isOpenP ? "" : " hidden") + ">" +
+              '<select class="progress-sel" data-progressset="' + esc(k) + '" data-set="' + (myProgress > 0 ? 1 : 0) + '"' + dis +
+              ' aria-label="Säsongsframsteg för ' + esc(it.title) + '">' + opts + "</select>" +
               "</div>";
           })()
         : "") +
@@ -1931,7 +1968,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 
     // Kortknapparna byts ut när listan ritas om. Släpp fokus först, annars
     // kan markeringen se ut att hoppa till kortet som tar dess plats.
-    if (t.dataset.remove || t.dataset.watch || t.dataset.want || t.dataset.fav || t.dataset.more || t.dataset.posterToggle) {
+    if (t.dataset.remove || t.dataset.watch || t.dataset.want || t.dataset.fav || t.dataset.more || t.dataset.progresstog || t.dataset.posterToggle) {
       t.blur();
     }
 
@@ -1979,6 +2016,13 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     if (t.dataset.more) {
       var mk = t.dataset.more;
       state.expanded[mk] = !state.expanded[mk];
+      render();
+      return;
+    }
+
+    if (t.dataset.progresstog) {
+      var pk = t.dataset.progresstog;
+      state.expandedProgress[pk] = !state.expandedProgress[pk];
       render();
       return;
     }
@@ -2195,6 +2239,17 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       if (t.value) state.wantWho[wk] = t.value;
       else delete state.wantWho[wk];
       store.set(WANTWHO_KEY(), state.wantWho);
+      maybePushActiveProfileToCloud();
+      render();
+    }
+
+    if (t.classList.contains("progress-sel")) {
+      if (isReceivedProfile(state.activeProfile)) return;
+      var pgk = t.dataset.progressset;
+      var pgv = parseInt(t.value, 10) || 0;
+      if (pgv > 0) state.seasonProgress[pgk] = pgv;
+      else delete state.seasonProgress[pgk];
+      store.set(PROGRESS_KEY(), state.seasonProgress);
       maybePushActiveProfileToCloud();
       render();
     }
