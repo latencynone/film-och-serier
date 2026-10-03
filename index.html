@@ -193,6 +193,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   font-size:12px;padding:8px 14px;border-radius:var(--radius);cursor:pointer;margin-bottom:16px}
 .page-back:hover{color:var(--txt);border-color:var(--txt)}
 .page-title{font-family:var(--display);font-size:22px;margin:0 0 4px;text-transform:none;letter-spacing:normal}
+.match-add-btn{margin:8px 0 0;padding:7px 12px;font-size:12px;width:auto}
+.match-added{font-family:var(--mono);font-size:12px;color:var(--sett);margin:8px 0 0}
 .compare-count{font-family:var(--mono);font-size:11px;letter-spacing:.08em;color:var(--dim);
   text-transform:uppercase;margin:18px 0 10px}
 .compare-count:first-of-type{margin-top:0}
@@ -206,6 +208,9 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 .match-shared-badge{font-family:var(--mono);font-size:9px;letter-spacing:.06em;
   color:var(--sett);text-transform:uppercase;border:1px solid var(--sett);
   border-radius:4px;padding:1px 5px;margin-left:4px}
+.activity-badge{font-family:var(--mono);font-size:9px;letter-spacing:.06em;
+  color:var(--on-accent);background:var(--want);text-transform:uppercase;
+  border-radius:4px;padding:1px 5px;margin-left:4px;font-weight:700}
 .select-wrap{position:relative;flex:1 1 160px}
 .select-wrap:after{content:'▾';position:absolute;right:10px;top:50%;transform:translateY(-50%);
   color:var(--dim);pointer-events:none;font-size:11px}
@@ -271,6 +276,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 .more-row[hidden]{display:none}
 .upcoming-season{font-family:var(--mono);font-size:12px;font-weight:700;
   color:var(--sett);letter-spacing:.02em;margin:8px 0 0}
+.upcoming-today{color:var(--rt);font-size:13px}
 .desc{font-size:14px;line-height:1.55;color:var(--desc);margin:8px 0 0}
 .actions{display:flex;gap:8px;flex-shrink:0}
 .heart:disabled,.watch:disabled,.trash:disabled,.star:disabled,
@@ -483,6 +489,8 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 [data-theme="soft"] .item .meta2,
 [data-theme="soft"] .item .more-tog{ color:#5C5C61; }
 [data-theme="soft"] .upcoming-season{ color:#146B27; }
+[data-theme="soft"] .match-added{ color:#146B27; }
+[data-theme="soft"] .upcoming-today{ color:#A4141A; }
 [data-theme="soft"] .title{ font-weight:600; }
 [data-theme="soft"] .heart,[data-theme="soft"] .watch,
 [data-theme="soft"] .trash,[data-theme="soft"] .star{
@@ -575,10 +583,21 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
         </select>
       </div>
     </div>
+    <div class="row2" id="runtimeRow">
+      <div class="select-wrap">
+        <select class="gsel" id="runtimeSelect" aria-label="Filtrera på speltid">
+          <option value="">Alla speltider</option>
+          <option value="short">Under 1 timme</option>
+          <option value="medium">1–2 timmar</option>
+          <option value="long">Över 2 timmar</option>
+        </select>
+      </div>
+    </div>
   </div>
 
   <div class="who-row kind-row" id="kindRow"></div>
   <div class="who-row" id="whoRow"></div>
+  <div id="randomBtnRow" hidden><button class="btn btn-outline" data-page="random">🎲 Vet inte vad jag vill se</button></div>
 
   <div id="page"></div>
 
@@ -801,6 +820,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     activeProfile: ACTIVE_PROFILE,
     profiles: ALL_PROFILES.slice(),
     matchSelected: [],
+    runtimeFilter: "",
     page: 1,
     theme: store.get(THEME_KEY) || "retro",
     active: SERVICES.slice(),
@@ -839,11 +859,33 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     document.getElementById("themeToggle").setAttribute("aria-expanded", "false");
   }
 
+  function markProfileSeen(name) {
+    store.set("tipstablan:lastseen:" + name, {
+      fav: store.get(BASE_FAV + ":" + name) || [],
+      want: store.get(BASE_WANT + ":" + name) || []
+    });
+  }
+
+  // Räknar nya favoriter/vill-se-tillägg sedan profilen senast visades -
+  // bara relevant för mottagna (delade) profiler, som kan ändras i
+  // bakgrunden utan att man aktivt tittar på dem.
+  function getActivityCount(name) {
+    if (!isReceivedProfile(name)) return 0;
+    var seen = store.get("tipstablan:lastseen:" + name);
+    if (!seen) return 0;
+    var curFav = store.get(BASE_FAV + ":" + name) || [];
+    var curWant = store.get(BASE_WANT + ":" + name) || [];
+    var newFav = curFav.filter(function (k) { return seen.fav.indexOf(k) === -1; }).length;
+    var newWant = curWant.filter(function (k) { return seen.want.indexOf(k) === -1; }).length;
+    return newFav + newWant;
+  }
+
   function switchProfile(name, keepTab) {
     if (name === ACTIVE_PROFILE) return;
     ACTIVE_PROFILE = name;
     state.activeProfile = name;
     store.set(ACTIVE_PROFILE_KEY, name);
+    if (isReceivedProfile(name)) markProfileSeen(name);
     loadProfileData();
     state.expanded = {};
     state.whoFilter = "";
@@ -1024,6 +1066,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       var data = doc.data();
       applyBackupObj({ fav: data.fav, watched: data.watched, want: data.want, who: data.who, ratings: data.ratings }, displayName);
       store.set("tipstablan:received-shareid:" + displayName, shareId);
+      markProfileSeen(displayName);
       subscribeToSharedProfile(displayName, shareId);
       render();
       alert("Du följer nu \"" + displayName + "\"s profil – den uppdateras automatiskt.");
@@ -1177,11 +1220,31 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     return String(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   }
 
+  // Plockar ut minuter ur en filmlängd ("2 tim 36 min" / "45 min").
+  // Returnerar null för sådant som inte är en speltid (t.ex. "1 säsong") -
+  // serier påverkas alltså aldrig av filtret, bara filmer.
+  function parseRuntimeMinutes(lengthStr) {
+    var h = /(\d+)\s*tim/.exec(lengthStr);
+    var m = /(\d+)\s*min/.exec(lengthStr);
+    if (!h && !m) return null;
+    return (h ? parseInt(h[1], 10) * 60 : 0) + (m ? parseInt(m[1], 10) : 0);
+  }
+  function matchesRuntimeFilter(it) {
+    if (!state.runtimeFilter) return true;
+    var mins = parseRuntimeMinutes(it.length);
+    if (mins === null) return true;
+    if (state.runtimeFilter === "short") return mins < 60;
+    if (state.runtimeFilter === "medium") return mins >= 60 && mins <= 120;
+    if (state.runtimeFilter === "long") return mins > 120;
+    return true;
+  }
+
   function draw(kind) {
     var q = state.search ? normSearch(state.search) : "";
     var pool = POOL[kind].filter(function (it) {
       if (state.active.indexOf(it.service) === -1) return false;
       if (state.genre && genreBucket(it.genre) !== state.genre) return false;
+      if (!matchesRuntimeFilter(it)) return false;
       if (state.removed.indexOf(keyOf(it)) !== -1) return false;
       if (state.watched.indexOf(keyOf(it)) !== -1) return false;
       if (state.wantToSee.indexOf(keyOf(it)) !== -1) return false;
@@ -1245,6 +1308,10 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   function upcomingSeasonHtml(it) {
     if (it.kind !== "serie") return "";
     if (it.nextEpisode) {
+      var todayStr = new Date().toISOString().slice(0, 10);
+      if (it.nextEpisode === todayStr) {
+        return '<p class="upcoming-season upcoming-today">🔴 Nytt avsnitt ikväll</p>';
+      }
       var ed = parseDate({ date: it.nextEpisode });
       return '<p class="upcoming-season">Nästa avsnitt ' + WEEKDAYS[ed.getDay()] + " " +
         String(ed.getDate()).padStart(2, "0") + " " + MONTHS_LONG[ed.getMonth()].slice(0, 3) + "</p>";
@@ -1351,6 +1418,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     var q = state.search ? normSearch(state.search) : "";
     var list = keys.map(function (k) { return BY_KEY[k]; })
       .filter(function (it) { return it && (!state.genre || genreBucket(it.genre) === state.genre); })
+      .filter(matchesRuntimeFilter)
       .filter(function (it) { return !q || normSearch(it.title).indexOf(q) !== -1; })
       .filter(function (it) { return !state.kindFilter || it.kind === state.kindFilter; });
     if (applyWhoFilter && state.whoFilter) {
@@ -1435,6 +1503,10 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       (it.mc ? '<a class="mc" href="' + mcLink + '" target="_blank" rel="noopener noreferrer">MC ' + it.mc + "</a>" : "") +
       "<span>" + esc(it.genre) + "</span><span>" + esc(it.length) + "</span>" +
       "<span>" + (it.kind === "film" ? "Film" : "Serie") + "</span></div>" +
+      (isReceivedProfile(state.activeProfile) ? "" :
+        isWantToSee(it)
+          ? '<p class="match-added">✓ I din Vill se-lista</p>'
+          : '<button class="btn btn-outline match-add-btn" data-matchadd="' + esc(keyOf(it)) + '">+ Lägg till i min Vill se</button>') +
       upcomingSeasonHtml(it) +
       '<p class="desc">' + esc(it.desc) + "</p></div></article>";
   }
@@ -1609,8 +1681,10 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       (others.length
         ? '<div class="profile-list">' + others.map(function (p) {
             var received = isReceivedProfile(p);
+            var activity = getActivityCount(p);
             return '<div class="profile-row"><span>' + esc(p) +
-              (received ? ' <span class="match-shared-badge">delad · synkas</span>' : "") + "</span>" +
+              (received ? ' <span class="match-shared-badge">delad · synkas</span>' : "") +
+              (activity > 0 ? ' <span class="activity-badge">+' + activity + ' nytt</span>' : "") + "</span>" +
               '<span class="profile-row-actions">' +
               '<button class="rm-restore" data-switch-profile="' + esc(p) + '">Byt till</button>' +
               '<button class="rm-restore" data-delete-profile="' + esc(p) + '">Ta bort</button>' +
@@ -1639,6 +1713,29 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     document.getElementById("page").innerHTML = html;
   }
 
+  function renderRandomPage() {
+    var html = '<button class="page-back" id="pageBack">← Tillbaka</button>' +
+      '<h2 class="page-title">🎲 Vet inte vad jag vill se?</h2>';
+
+    var pool = state.wantToSee.map(function (k) { return BY_KEY[k]; }).filter(Boolean);
+    if (!pool.length) {
+      html += '<div class="empty"><p>Vill se-listan är tom</p><span>Lägg till något med ★ först.</span></div>';
+      document.getElementById("page").innerHTML = html;
+      return;
+    }
+
+    if (!state.randomPick || pool.indexOf(BY_KEY[state.randomPick]) === -1) {
+      state.randomPick = keyOf(pool[Math.floor(Math.random() * pool.length)]);
+    }
+    var picked = BY_KEY[state.randomPick] || pool[0];
+
+    html += '<p style="color:var(--dim);font-size:13px;margin:0 0 14px">Slumpad ur dina ' + pool.length +
+      ' titlar i Vill se.</p>' +
+      '<button class="btn" id="randomAgainBtn" style="margin-bottom:16px">🎲 Slumpa en annan</button>' +
+      card(picked, 0);
+    document.getElementById("page").innerHTML = html;
+  }
+
   function renderRemovedPage() {
     var html = '<button class="page-back" id="pageBack">← Tillbaka</button>' +
       '<h2 class="page-title">Borttagna (' + state.removed.length + ')</h2>';
@@ -1656,10 +1753,12 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   }
 
   function render() {
-    var isPage = state.tab === "backup" || state.tab === "removed" || state.tab === "info" || state.tab === "compare" || state.tab === "history";
+    var isPage = state.tab === "backup" || state.tab === "removed" || state.tab === "info" || state.tab === "compare" || state.tab === "history" || state.tab === "random";
     document.getElementById("tabs").style.display = isPage ? "none" : "";
     document.querySelector(".search-row").style.display = isPage ? "none" : "";
     document.querySelector(".ctrl").style.display = isPage ? "none" : "";
+    document.getElementById("runtimeRow").style.display = (state.tab === "serie") ? "none" : "";
+    document.getElementById("randomBtnRow").hidden = !(state.tab === "villse" && state.wantToSee.length > 0);
     document.getElementById("list").style.display = isPage ? "none" : "";
     document.getElementById("pager").style.display = isPage ? "none" : "";
     document.getElementById("pagerTop").style.display = isPage ? "none" : "";
@@ -1681,6 +1780,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       else if (state.tab === "info") renderInfoPage();
       else if (state.tab === "compare") renderComparePage();
       else if (state.tab === "history") renderHistoryPage();
+      else if (state.tab === "random") renderRandomPage();
       else renderRemovedPage();
       return;
     }
@@ -1853,6 +1953,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     if (t.dataset.page) {
       closeMenu();
       if (t.dataset.page === "compare") state.returnTab = "backup";
+      if (t.dataset.page === "random") state.returnTab = "villse";
       state.tab = t.dataset.page;
       render();
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1863,6 +1964,15 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       state.tab = state.returnTab || "film";
       render();
       window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    if (t.id === "randomAgainBtn") {
+      var pool = state.wantToSee.map(function (k) { return BY_KEY[k]; }).filter(Boolean);
+      var others = pool.filter(function (it) { return keyOf(it) !== state.randomPick; });
+      var choices = others.length ? others : pool;
+      if (choices.length) state.randomPick = keyOf(choices[Math.floor(Math.random() * choices.length)]);
+      render();
       return;
     }
 
@@ -1932,6 +2042,19 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       store.set(WANT_KEY(), state.wantToSee);
       maybePushActiveProfileToCloud();
       drawAll(); render(); return;
+    }
+
+    if (t.dataset.matchadd) {
+      if (isReceivedProfile(state.activeProfile)) return;
+      var mk = t.dataset.matchadd;
+      if (state.wantToSee.indexOf(mk) === -1) {
+        state.wantToSee = [mk].concat(state.wantToSee);
+        store.set(WANT_KEY(), state.wantToSee);
+        maybePushActiveProfileToCloud();
+        drawAll();
+      }
+      render();
+      return;
     }
 
     if (t.dataset.who !== undefined && t.hasAttribute("data-who")) {
@@ -2022,6 +2145,12 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 
   document.getElementById("sortSelect").addEventListener("change", function (e) {
     state.sort = e.target.value;
+    state.page = 1;
+    drawAll(); render();
+  });
+
+  document.getElementById("runtimeSelect").addEventListener("change", function (e) {
+    state.runtimeFilter = e.target.value;
     state.page = 1;
     drawAll(); render();
   });
