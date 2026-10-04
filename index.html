@@ -323,6 +323,10 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 .empty p{margin:0 0 6px;font-family:var(--display);font-size:18px;letter-spacing:.05em;text-transform:uppercase}
 .empty span{font-size:13px;color:var(--dim)}
 .pager-top{text-align:right;margin:-4px 0 10px}
+.share-hint{border:1px solid var(--want);background:color-mix(in srgb, var(--want) 12%, transparent);
+  border-radius:var(--radius);padding:12px 14px;margin:0 0 14px;font-size:13px;line-height:1.5}
+.share-hint p{margin:0 0 10px}
+.share-hint .btn{width:auto;padding:8px 14px;font-size:12px;margin-right:6px}
 .readonly-banner{font-size:13px;color:var(--sett);background:color-mix(in srgb, var(--sett) 12%, transparent);
   border:1px solid var(--sett);border-radius:var(--radius);padding:10px 14px;margin:0 0 14px}
 .pager-top:empty{display:none}
@@ -608,6 +612,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
   <div id="page"></div>
 
   <div id="readonlyBanner"></div>
+  <div id="shareHintBox"></div>
   <div class="pager-top" id="pagerTop"></div>
 
   <div id="list"></div>
@@ -847,6 +852,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     seasonProgress: store.get(PROGRESS_KEY()) || {},
     lists: store.get(LISTS_KEY()) || {},
     viewingList: "",
+    shareHint: null,
     expandedLists: {},
     returnTab: "film",
     expanded: {},
@@ -1059,6 +1065,27 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     }
     var name = state.activeProfile;
     var shareId = getShareId(name);
+
+    // Första delningen (eller standardnamnet "Jag"): be om ett namn som
+    // mottagaren känner igen, t.ex. förnamnet. Profilen döps om lokalt.
+    if (!shareId || name === "Jag") {
+      var wanted = prompt(
+        "Vad ska mottagaren kalla din profil? Använd t.ex. ditt förnamn – " +
+        "det är namnet de ser i sin app.",
+        name === "Jag" ? "" : name
+      );
+      if (wanted === null) return; // avbröt
+      wanted = wanted.trim().slice(0, 40);
+      if (!wanted) { alert("Skriv ett namn så mottagaren vet vems profil det är."); return; }
+      if (wanted === "Jag") { alert("\"Jag\" blir förvirrande för mottagaren – välj t.ex. ditt förnamn."); return; }
+      if (wanted !== name) {
+        renameActiveProfile(wanted);
+        if (state.activeProfile !== wanted) return; // namnet var upptaget, felmeddelande visades redan
+        name = wanted;
+      }
+      shareId = getShareId(name);
+    }
+
     if (!shareId) {
       shareId = genShareId();
       store.set("tipstablan:shareid:" + name, shareId);
@@ -1067,7 +1094,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 
     var url = location.origin + location.pathname + "?share=" + shareId + "&n=" + encodeURIComponent(name);
     if (navigator.share) {
-      navigator.share({ title: "FILMoSERIER – " + name, text: "Följ min profil i FILMoSERIER", url: url }).catch(function () {});
+      navigator.share({ title: "FILMoSERIER – " + name, text: "Följ " + name + "s profil i FILMoSERIER", url: url }).catch(function () {});
     } else if (navigator.clipboard) {
       navigator.clipboard.writeText(url).then(function () {
         alert("Länk kopierad till urklipp:\n" + url);
@@ -1105,20 +1132,21 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     });
   }
 
-  // Kollar efter ?share=... i webbadressen (öppnad via en delad länk),
-  // hämtar profilen en gång och sätter sedan upp en live-prenumeration.
-  function checkIncomingShare() {
+  function isStandalone() { return window.navigator.standalone === true; }
+
+  // Tar emot en delad profil. fromLink = öppnad via en länk (webbadressen)
+  // i motsats till inklistrad manuellt i hemskärmsappen.
+  function receiveShare(shareId, sharedName, fromLink) {
     if (!cloudReady) return;
-    var params = new URLSearchParams(location.search);
-    var shareId = params.get("share");
-    if (!shareId) return;
-    var sharedName = (params.get("n") || "Delad profil").slice(0, 40);
-    history.replaceState({}, "", location.pathname);
+    sharedName = (sharedName || "Delad profil").slice(0, 40);
 
     var already = state.profiles.some(function (p) {
       return store.get("tipstablan:received-shareid:" + p) === shareId;
     });
-    if (already) return;
+    if (already) {
+      if (!fromLink) alert("Du följer redan den profilen.");
+      return;
+    }
 
     var isOwnShare = state.profiles.some(function (p) { return getShareId(p) === shareId; });
     if (isOwnShare) {
@@ -1128,6 +1156,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 
     var displayName = sharedName;
     if (state.profiles.indexOf(displayName) !== -1) displayName = sharedName + " (delad)";
+    var linkUrl = location.origin + location.pathname + "?share=" + shareId + "&n=" + encodeURIComponent(sharedName);
 
     db.collection("profiles").doc(shareId).get().then(function (doc) {
       if (!doc.exists) { alert("Hittade ingen delad profil med den länken."); return; }
@@ -1136,11 +1165,42 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       store.set("tipstablan:received-shareid:" + displayName, shareId);
       markProfileSeen(displayName);
       subscribeToSharedProfile(displayName, shareId);
+      // Länkar öppnas alltid i Safari på iOS, som har egen lagring skild från
+      // hemskärmsappen. Visa då en tydlig ruta med "Kopiera länk".
+      if (fromLink && !isStandalone()) state.shareHint = { name: displayName, url: linkUrl };
       render();
       alert("Du följer nu \"" + displayName + "\"s profil – den uppdateras automatiskt.");
     }).catch(function () {
       alert("Kunde inte hämta den delade profilen just nu. Testa igen senare.");
     });
+  }
+
+  // Plockar ut delnings-ID och namn ur en inklistrad länk (eller bara ett ID).
+  function parseShareInput(text) {
+    text = (text || "").trim();
+    var out = { id: "", name: "" };
+    var m = /[?&]share=([a-z0-9]+)/i.exec(text);
+    if (m) {
+      out.id = m[1];
+      var n = /[?&]n=([^&\s]+)/.exec(text);
+      if (n) {
+        try { out.name = decodeURIComponent(n[1].replace(/\+/g, " ")); } catch (e) { out.name = n[1]; }
+      }
+    } else if (/^[a-z0-9]{8,30}$/i.test(text)) {
+      out.id = text;
+    }
+    return out;
+  }
+
+  // Kollar efter ?share=... i webbadressen (öppnad via en delad länk).
+  function checkIncomingShare() {
+    if (!cloudReady) return;
+    var params = new URLSearchParams(location.search);
+    var shareId = params.get("share");
+    if (!shareId) return;
+    var sharedName = params.get("n") || "Delad profil";
+    history.replaceState({}, "", location.pathname);
+    receiveShare(shareId, sharedName, true);
   }
 
   /* ============ backup via fil ============
@@ -1790,6 +1850,18 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
           "</div>" +
           (myShareId ? '<p style="color:var(--sett);font-size:12px;margin:8px 0 0">✓ Den här profilen är delad och uppdateras automatiskt hos mottagaren.</p>' : "")) +
 
+      (cloudReady
+        ? '<h3 style="font-family:var(--display);font-size:16px;margin:20px 0 6px">Ta emot delad profil</h3>' +
+          '<p style="color:var(--dim);font-size:13px;margin:0 0 10px">Fick du en länk som öppnades i webbläsaren istället för här? ' +
+          'Kopiera länken, klistra in den nedan och tryck Ta emot.</p>' +
+          '<div class="backup-link-row">' +
+            '<input type="text" id="receiveShareInput" placeholder="Klistra in länk…" autocapitalize="off" autocorrect="off" ' +
+            'style="flex:1 1 180px;background:var(--panel);border:1px solid var(--line);color:var(--txt);' +
+            'border-radius:var(--radius);padding:10px 12px;font-family:var(--body);font-size:14px">' +
+            '<button class="btn" id="receiveShareBtn">Ta emot</button>' +
+          "</div>"
+        : "") +
+
       '<h3 style="font-family:var(--display);font-size:16px;margin:20px 0 6px">Andra profiler</h3>' +
       (others.length
         ? '<div class="profile-list">' + others.map(function (p) {
@@ -1930,6 +2002,14 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     document.getElementById("foot").style.display = isPage ? "none" : "";
     document.getElementById("whoRow").innerHTML = "";
     document.getElementById("kindRow").innerHTML = "";
+    var hintBox = document.getElementById("shareHintBox");
+    hintBox.innerHTML = (state.shareHint && !isPage)
+      ? '<div class="share-hint"><p><b>' + esc(state.shareHint.name) + '</b> är mottagen här i webbläsaren. ' +
+        'Använder du appen från hemskärmen? Den har egen lagring – kopiera länken och klistra in den där ' +
+        'under <b>Profiler &amp; Backup → Ta emot delad profil</b>.</p>' +
+        '<button class="btn btn-outline" id="copyShareHintBtn">Kopiera länk</button> ' +
+        '<button class="btn btn-outline" id="closeShareHintBtn">Stäng</button></div>'
+      : "";
     var roBanner = document.getElementById("readonlyBanner");
     roBanner.innerHTML = (!isPage && isReceivedProfile(state.activeProfile))
       ? '<p class="readonly-banner">👁 Visar <b>' + esc(state.activeProfile) + '</b>s profil – skrivskyddad, synkas automatiskt</p>'
@@ -2284,6 +2364,34 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     if (t.dataset.switchProfile) { switchProfile(t.dataset.switchProfile, true); return; }
     if (t.dataset.deleteProfile) { deleteProfile(t.dataset.deleteProfile); return; }
     if (t.id === "shareProfileBtn") { shareActiveProfile(); return; }
+
+    if (t.id === "receiveShareBtn") {
+      var parsed = parseShareInput(document.getElementById("receiveShareInput").value);
+      if (!parsed.id) { alert("Det där ser inte ut som en delningslänk. Klistra in hela länken."); return; }
+      var rname = parsed.name;
+      if (!rname) {
+        rname = prompt("Vad heter profilen du tar emot?", "");
+        if (rname === null) return;
+        rname = rname.trim();
+        if (!rname) return;
+      }
+      receiveShare(parsed.id, rname, false);
+      return;
+    }
+
+    if (t.id === "copyShareHintBtn" && state.shareHint) {
+      var hurl = state.shareHint.url;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(hurl).then(function () {
+          alert("Länk kopierad. Öppna hemskärmsappen → Profiler & Backup → Ta emot delad profil och klistra in.");
+        }).catch(function () { prompt("Kopiera länken:", hurl); });
+      } else {
+        prompt("Kopiera länken:", hurl);
+      }
+      return;
+    }
+
+    if (t.id === "closeShareHintBtn") { state.shareHint = null; render(); return; }
 
     if (t.id === "createListBtn") {
       var inputEl = document.getElementById("newListInput");
