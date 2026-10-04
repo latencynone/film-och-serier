@@ -38,6 +38,19 @@ MAX_AGE_YEARS = 10
 DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "titles.json")
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), "..", "history.json")
 HISTORY_MAX_RUNS = 20
+SEEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seen_cache.json")
+
+# Urval: titlar upptäcks med flera sökstrategier (se discover_phase) och
+# resultatet av varje kollad titel kommer ihåg i seen_cache.json, så samma
+# titel inte kostar ett OMDb-anrop varje körning. OMDb:s gratisgräns är
+# 1000 anrop/dygn; budgeten nedan lämnar marginal för en extra manuell körning.
+MAX_OMDB_PER_RUN = 450
+DEEP_PAGES = 25  # 25 sidor x 20 = upp till 500 titlar per tjänst och typ
+YEAR_PAGES = 15  # per premiärår: upp till 300 titlar per tjänst och typ
+# Hur länge ett kollat resultat gäller innan titeln kollas om (dagar).
+SEEN_TTL_DAYS = {"ok": 30, "lowrating": 30, "old": 30, "genre": 90, "nodesc": 14, "nodata": 7}
+_OMDB_CALLS = {"n": 0}
+_LAST_REASON = {"v": "nodata"}
 
 # Namnen måste matcha hur tjänsterna heter i TMDb:s providerlista.
 WANTED_SERVICES = {
@@ -131,35 +144,110 @@ def normalize_length(runtime_min, media_type, seasons=None):
     return "1 säsong"
 
 
-def discover_candidates(media_type, provider_id):
-    since = (date.today() - timedelta(days=365 * MAX_AGE_YEARS)).isoformat()
-    params_base = {
-        "watch_region": REGION,
-        "with_watch_providers": provider_id,
-        "with_watch_monetization_types": "flatrate",
-        "sort_by": "popularity.desc",
-        "language": "sv-SE",
-    }
-    if media_type == "movie":
-        # En films releasedatum är entydigt - filtrera direkt i sökningen.
-        params_base["primary_release_date.gte"] = since
-    # För TV filtreras INTE på discover-sökningens first_air_date, eftersom
-    # det bara är säsong 1:s premiärdatum. En långkörare som fortfarande
-    # sänder nya säsonger (t.ex. The Boys, premiär 2019, sista säsongen 2026)
-    # skulle annars felaktigt sorteras bort som "för gammal". Recency
-    # kollas istället per kandidat mot seriens FAKTISKA senaste säsong,
-    # se get_tv_details().
+def load_seen():
+    try:
+        with open(SEEN_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (IOError, ValueError):
+        return {}
+
+
+def save_seen(seen):
+    cutoff = (date.today() - timedelta(days=120)).isoformat()
+    keep = {k: v for k, v in seen.items() if isinstance(v, dict) and v.get("d", "") >= cutoff}
+    with open(SEEN_FILE, "w", encoding="utf-8") as f:
+        json.dump(keep, f, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def seen_fresh(seen, key):
+    rec = seen.get(key)
+    if not isinstance(rec, dict):
+        return False
+    ttl = SEEN_TTL_DAYS.get(rec.get("r"), 14)
+    try:
+        age = (date.today() - date.fromisoformat(rec["d"])).days
+    except (KeyError, ValueError):
+        return False
+    return age < ttl
+
+
+def _paginate(media_type, params, max_pages):
     results = []
-    for page in (1, 2, 3, 4):
-        params = dict(params_base)
-        params["page"] = page
-        data = tmdb_get("/discover/" + media_type, params)
+    for page in range(1, max_pages + 1):
+        p = dict(params)
+        p["page"] = page
+        data = tmdb_get("/discover/" + media_type, p)
         if not data:
             break
         results.extend(data.get("results", []))
-        if page >= data.get("total_pages", 1):
+        if page >= min(data.get("total_pages", 1), 500):
             break
+        time.sleep(0.03)
     return results
+
+
+def discover_phase(media_type, provider_id, phase, year=None):
+    """Kompletterande sökstrategier. Enbart "populärast just nu" missar
+    välbetygsatta titlar som tonat ut i popularitet (t.ex. en serie som
+    avslutades för några månader sedan). TMDb ger dessutom högst 500 träffar
+    per sökning, så en enda "bäst röstade"-lista räcker inte heller. Därför:
+      0 = populärast just nu (fångar nytt och hett)
+      1 = nyast först (fångar färska titlar med få röster)
+      2 = flest röster bland välbetygsatta, hela perioden (fångar långkörare
+          som premiärade för länge sedan men fortfarande ger nya säsonger)
+      3 = flest röster per PREMIÄRÅR (year=...). Varje år får sin egen topp,
+          så ingen titel faller bort bara för att perioden som helhet är för
+          stor för TMDb:s 500-träffarstak."""
+    since = (date.today() - timedelta(days=365 * MAX_AGE_YEARS)).isoformat()
+    base = {
+        "watch_region": REGION,
+        "with_watch_providers": provider_id,
+        "with_watch_monetization_types": "flatrate",
+        "language": "sv-SE",
+    }
+    # För TV filtreras INTE på first_air_date i fas 0-2 (bara säsong 1:s
+    # premiär - en långkörare som fortfarande ger nya säsonger skulle
+    # felaktigt sorteras bort). air_date.gte kollar istället om NÅGOT avsnitt
+    # sänts i perioden; exakt recency kollas sedan mot seriens senaste säsong,
+    # se get_tv_details().
+    if phase == 0:
+        params = dict(base, sort_by="popularity.desc")
+        if media_type == "movie":
+            params["primary_release_date.gte"] = since
+        return _paginate(media_type, params, 4)
+    params = dict(base)
+    date_key = "primary_release_date" if media_type == "movie" else "first_air_date"
+    if phase == 3:
+        params[date_key + ".gte"] = "%d-01-01" % year
+        params[date_key + ".lte"] = "%d-12-31" % year
+        params["sort_by"] = "vote_count.desc"
+        params["vote_count.gte"] = 10
+        params["vote_average.gte"] = 6.5
+        return _paginate(media_type, params, YEAR_PAGES)
+    if media_type == "movie":
+        params["primary_release_date.gte"] = since
+    else:
+        params["air_date.gte"] = since
+    if phase == 1:
+        params["sort_by"] = "primary_release_date.desc" if media_type == "movie" else "first_air_date.desc"
+        params["vote_count.gte"] = 5
+        params["vote_average.gte"] = 6.3
+        return _paginate(media_type, params, 10)
+    params["sort_by"] = "vote_count.desc"
+    params["vote_count.gte"] = 30
+    params["vote_average.gte"] = 6.5
+    return _paginate(media_type, params, DEEP_PAGES)
+
+
+def get_imdb_id(media_type, tmdb_id):
+    """Exakt IMDb-ID via TMDb. Ger träffsäkrare OMDb-uppslag än titel+år,
+    och låter oss känna igen redan sparade titlar utan att spendera OMDb-anrop."""
+    if not tmdb_id:
+        return ""
+    data = tmdb_get("/%s/%s/external_ids" % (media_type, tmdb_id), {}) or {}
+    v = data.get("imdb_id") or ""
+    return v if re.match(r"^tt\d+$", v) else ""
 
 
 _TV_LAST_AIR_CACHE = {}
@@ -267,9 +355,13 @@ def truncate_to_sentence(text, max_len=140):
     return text  # ingen punkt alls i hela texten (ovanligt)
 
 
-def omdb_lookup(title, year):
-    url = "https://www.omdbapi.com/?apikey=%s&t=%s&y=%s" % (
-        OMDB_KEY, urllib.parse.quote(title), year or "")
+def omdb_lookup(title, year, imdb_id=None):
+    _OMDB_CALLS["n"] += 1
+    if imdb_id:
+        url = "https://www.omdbapi.com/?apikey=%s&i=%s" % (OMDB_KEY, imdb_id)
+    else:
+        url = "https://www.omdbapi.com/?apikey=%s&t=%s&y=%s" % (
+            OMDB_KEY, urllib.parse.quote(title), year or "")
     data = http_get_json(url)
     if not data or data.get("Response") == "False":
         return None
@@ -307,7 +399,10 @@ def omdb_lookup(title, year):
     }
 
 
-def build_entry(item, media_type, service_name):
+def build_entry(item, media_type, service_name, known_ids=None, refresh=True):
+    """Bygger en post, eller None. Varför en titel avvisades lämnas i
+    _LAST_REASON så urvalet kan komma ihåg det (och kolla om senare)."""
+    _LAST_REASON["v"] = "nodata"
     title = item.get("title") or item.get("name")
     date_str = item.get("release_date") or item.get("first_air_date")
     if not title or not date_str:
@@ -318,6 +413,7 @@ def build_entry(item, media_type, service_name):
     # sorteras bort direkt, innan de dyra uppslagen görs.
     EXCLUDED_TV_GENRES = {10764, 10767, 10763}  # Reality, Talk, News
     if media_type == "tv" and EXCLUDED_TV_GENRES.intersection(item.get("genre_ids", [])):
+        _LAST_REASON["v"] = "genre"
         return None
 
     omdb_year = date_str[:4]  # OMDb indexerar TV-serier på ursprungsåret
@@ -336,6 +432,7 @@ def build_entry(item, media_type, service_name):
             return None
         cutoff = (date.today() - timedelta(days=365 * MAX_AGE_YEARS)).isoformat()
         if details["last_air_date"] < cutoff:
+            _LAST_REASON["v"] = "old"
             return None
         date_str = details["last_air_date"]  # visas/sorteras på senaste säsongen, inte premiären
         overview_en = details["overview_en"]
@@ -351,12 +448,23 @@ def build_entry(item, media_type, service_name):
     # skillnad från kända serier som bara råkar sakna svensk översättning.
     final_overview = overview_sv or overview_en
     if not final_overview:
+        _LAST_REASON["v"] = "nodesc"
         return None
 
-    omdb = omdb_lookup(title, omdb_year)
-    time.sleep(0.15)  # skonsam mot OMDb:s gratisgräns
-    if not omdb or omdb["imdb"] < MIN_IMDB:
+    imdb_id = get_imdb_id(media_type, item.get("id"))
+    if known_ids is not None and imdb_id and imdb_id in known_ids and not refresh:
+        _LAST_REASON["v"] = "ok"  # finns redan i databasen - inget OMDb-anrop behövs
         return None
+
+    omdb = omdb_lookup(title, omdb_year, imdb_id or None)
+    time.sleep(0.15)  # skonsam mot OMDb:s gratisgräns
+    if not omdb:
+        _LAST_REASON["v"] = "nodata"
+        return None
+    if omdb["imdb"] < MIN_IMDB:
+        _LAST_REASON["v"] = "lowrating"
+        return None
+    _LAST_REASON["v"] = "ok"
 
     genre_names = get_genre_names(media_type)
     genre_ids = item.get("genre_ids", [])
@@ -383,6 +491,7 @@ def build_entry(item, media_type, service_name):
         "upcomingSeason": upcoming_season,
         "nextEpisode": next_episode,
         "totalSeasons": omdb["seasons"] if media_type == "tv" else None,
+        "tmdb": item.get("id"),
         "kind": kind,
     }
 
@@ -392,6 +501,7 @@ def omdb_lookup_by_id(imdb_id):
     fylla i affischbilder och säsongsantal på titlar som redan finns men
     saknar dem. Returnerar {"poster": str, "seasons": int|None} eller None
     om uppslaget helt misslyckades."""
+    _OMDB_CALLS["n"] += 1
     url = "https://www.omdbapi.com/?apikey=%s&i=%s" % (OMDB_KEY, imdb_id)
     data = http_get_json(url)
     if not data or data.get("Response") == "False":
@@ -542,58 +652,104 @@ def main():
             # misslyckad sökning ska inte permanent stämpla något, och
             # nästa körning försöker på nytt istället.
 
-    for media_type in ("movie", "tv"):
-        print("== %s ==" % media_type)
-        provider_ids = get_provider_ids(media_type)
-        for service_name, provider_id in provider_ids.items():
-            print(" Söker på %s..." % service_name)
-            candidates = discover_candidates(media_type, provider_id)
-            for item in candidates:
-                entry = build_entry(item, media_type, service_name)
-                if not entry:
-                    continue
+    # --- Urval ---
+    today_s = date.today().isoformat()
+    seen = load_seen()
+    providers = {mt: get_provider_ids(mt) for mt in ("movie", "tv")}
+    known_ids = set(by_id.keys())
 
-                # IMDb-ID är den pålitliga nyckeln - releasedatum kan skilja
-                # sig med några dagar mellan TMDb och det datum en titel
-                # faktiskt dök upp på tjänsten, vilket annars gett dubbletter.
-                if entry["id"] and entry["id"] in by_id:
-                    old = by_id[entry["id"]]
-                    # Poster och kommande säsong uppdateras oberoende av
-                    # betygsjämförelsen nedan - annars kunde en färskare
-                    # affisch eller nytt säsongsdatum tystas ner bara för
-                    # att RT/MC/beskrivning råkade vara oförändrade.
-                    refreshed = False
-                    if entry.get("poster") and entry["poster"] != old.get("poster"):
-                        old["poster"] = entry["poster"]
-                        refreshed = True
-                    if "upcomingSeason" in entry and entry["upcomingSeason"] != old.get("upcomingSeason"):
-                        old["upcomingSeason"] = entry["upcomingSeason"]
-                        refreshed = True
-                    if entry.get("totalSeasons") and entry["totalSeasons"] != old.get("totalSeasons"):
-                        old["totalSeasons"] = entry["totalSeasons"]
-                        refreshed = True
-                    if entry_score(entry) > entry_score(old):
-                        old["imdb"], old["rt"], old["mc"] = entry["imdb"], entry["rt"], entry["mc"]
-                        if entry["length"]:
-                            old["length"] = entry["length"]
-                        if len(entry["desc"]) > len(old.get("desc", "")):
-                            old["desc"] = entry["desc"]
-                        refreshed = True
-                        print("  ~ uppdaterade %s med bättre data" % entry["title"])
-                    if refreshed:
-                        upgraded += 1
-                    continue
+    # Planen byggs fas för fas (populärast, nyast, djupsökning) över alla
+    # tjänster, så det viktigaste kollas först om OMDb-budgeten tar slut.
+    this_year = date.today().year
+    phases = [(0, None, "populärast just nu"), (1, None, "nyast först")]
+    for y in range(this_year, this_year - MAX_AGE_YEARS - 1, -1):
+        phases.append((3, y, "premiärår %d" % y))
+    phases.append((2, None, "djupsökning, hela perioden"))
+    plan = []
+    queued = set()
+    for phase, year, phase_name in phases:
+        for media_type in ("movie", "tv"):
+            for service_name, provider_id in providers[media_type].items():
+                found = discover_phase(media_type, provider_id, phase, year)
+                new_in_plan = 0
+                for item in found:
+                    k = "%s:%s" % (media_type, item.get("id"))
+                    if k in queued:
+                        continue
+                    queued.add(k)
+                    plan.append((media_type, service_name, item, k))
+                    new_in_plan += 1
+                print(" [%s] %s / %s: %d kandidater, %d nya i planen" % (
+                    phase_name, media_type, service_name, len(found), new_in_plan))
 
-                key = entry["kind"] + ":" + entry["title"] + ":" + entry["date"]
-                if key in existing_keys:
-                    continue
-                if entry["id"]:
-                    by_id[entry["id"]] = entry
-                existing_keys.add(key)
-                added[entry["kind"]].append(entry)
-                print("  + %s (%s) IMDb %.1f" % (entry["title"], entry["date"][:4], entry["imdb"]))
+    print("Plan: %d unika kandidater." % len(plan))
+    skipped_fresh = 0
+    checked = 0
+    deferred = 0
+    for idx, (media_type, service_name, item, k) in enumerate(plan):
+        if seen_fresh(seen, k):
+            skipped_fresh += 1
+            continue
+        if _OMDB_CALLS["n"] >= MAX_OMDB_PER_RUN:
+            deferred = sum(1 for p in plan[idx:] if not seen_fresh(seen, p[3]))
+            print("OMDb-budgeten för körningen (%d anrop) är slut. %d kandidater väntar till nästa körning." % (
+                MAX_OMDB_PER_RUN, deferred))
+            break
+        entry = build_entry(item, media_type, service_name, known_ids=known_ids, refresh=(k in seen))
+        checked += 1
+        seen[k] = {"d": today_s, "r": "ok" if entry else _LAST_REASON["v"]}
+        if not entry:
+            continue
 
-    log_history_run(added)
+        # IMDb-ID är den pålitliga nyckeln - releasedatum kan skilja
+        # sig med några dagar mellan TMDb och det datum en titel
+        # faktiskt dök upp på tjänsten, vilket annars gett dubbletter.
+        if entry["id"] and entry["id"] in by_id:
+            old = by_id[entry["id"]]
+            # Poster och kommande säsong uppdateras oberoende av
+            # betygsjämförelsen nedan - annars kunde en färskare
+            # affisch eller nytt säsongsdatum tystas ner bara för
+            # att RT/MC/beskrivning råkade vara oförändrade.
+            refreshed = False
+            if entry.get("poster") and entry["poster"] != old.get("poster"):
+                old["poster"] = entry["poster"]
+                refreshed = True
+            if "upcomingSeason" in entry and entry["upcomingSeason"] != old.get("upcomingSeason"):
+                old["upcomingSeason"] = entry["upcomingSeason"]
+                refreshed = True
+            if entry.get("totalSeasons") and entry["totalSeasons"] != old.get("totalSeasons"):
+                old["totalSeasons"] = entry["totalSeasons"]
+                refreshed = True
+            if entry.get("tmdb") and not old.get("tmdb"):
+                old["tmdb"] = entry["tmdb"]
+                refreshed = True
+            if entry_score(entry) > entry_score(old):
+                old["imdb"], old["rt"], old["mc"] = entry["imdb"], entry["rt"], entry["mc"]
+                if entry["length"]:
+                    old["length"] = entry["length"]
+                if len(entry["desc"]) > len(old.get("desc", "")):
+                    old["desc"] = entry["desc"]
+                refreshed = True
+                print("  ~ uppdaterade %s med bättre data" % entry["title"])
+            if refreshed:
+                upgraded += 1
+            continue
+
+        key = entry["kind"] + ":" + entry["title"] + ":" + entry["date"]
+        if key in existing_keys:
+            continue
+        if entry["id"]:
+            by_id[entry["id"]] = entry
+        existing_keys.add(key)
+        added[entry["kind"]].append(entry)
+        print("  + %s (%s) IMDb %.1f" % (entry["title"], entry["date"][:4], entry["imdb"]))
+
+    save_seen(seen)
+    print("Urval klart: %d kollade, %d hoppades över (nyligen kollade), %d väntar. OMDb-anrop: %d." % (
+        checked, skipped_fresh, deferred, _OMDB_CALLS["n"]))
+
+    if added["film"] or added["serie"]:
+        log_history_run(added)
 
     if not added["film"] and not added["serie"] and not upgraded:
         print("Inga nya titlar eller uppdateringar den här veckan.")
