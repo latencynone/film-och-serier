@@ -2,17 +2,24 @@ name: Uppdatera titlar
 
 on:
   schedule:
-    # Varje måndag kl 06:00 svensk tid (05:00 UTC vintertid / 04:00 UTC sommartid,
-    # cron kör alltid i UTC så tiden kan skifta en timme med sommartid)
-    - cron: "0 5 * * 1"
+    # Varje dag ca kl 06:00 svensk tid (cron kör i UTC, så tiden skiftar en
+    # timme med sommartid). Daglig körning behövs för att den djupa
+    # titelsökningen ska hinna ikapp inom OMDb:s gräns på 1000 anrop/dygn;
+    # när allt är kollat blir varje körning snabb och billig.
+    - cron: "0 4 * * *"
   workflow_dispatch: {}  # gör det möjligt att köra manuellt från Actions-fliken
 
 permissions:
   contents: write
 
+concurrency:
+  group: update-titles
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checka ut repot
         uses: actions/checkout@v6
@@ -32,10 +39,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- titles.json history.json; then
-            echo "Inga ändringar den här veckan."
+          git add titles.json history.json scripts/seen_cache.json
+          if git diff --cached --quiet; then
+            echo "Inga ändringar."
           else
-            git add titles.json history.json
             git commit -m "Automatisk titeluppdatering $(date +%Y-%m-%d)"
             git push
           fi
