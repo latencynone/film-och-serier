@@ -1747,7 +1747,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
 
     var html = '<button class="page-back" id="pageBack">← Tillbaka</button>' +
       '<h2 class="page-title">Historik &amp; Logg</h2>' +
-      '<p style="color:var(--dim);font-size:13px;margin:0 0 16px">Vad det schemalagda jobbet (varje måndag) har hittat vid varje körning, senaste överst.</p>';
+      '<p style="color:var(--dim);font-size:13px;margin:0 0 16px">Vad det schemalagda jobbet har hittat. Det körs varje dag, men bara körningar som hittat något nytt visas här. Senaste överst.</p>';
 
     if (state.history === null) {
       html += '<div class="empty"><p>Kunde inte läsa in historiken</p><span>Kontrollera att history.json finns i samma mapp som index.html.</span></div>';
@@ -1782,7 +1782,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       '<h3 class="info-h">Om titelbanken</h3>' +
       '<p class="info-p">Innehåller just nu ' + total + ' titlar (' + POOL.film.length + ' filmer, ' +
       POOL.serie.length + ' serier), alla max tio år gamla (för serier räknas senaste säsongen, inte bara premiären) med IMDb-betyg 7,0 eller högre. ' +
-      'Banken uppdateras automatiskt en gång i veckan med nya titlar som dyker upp på dina tjänster. ' +
+      'Banken uppdateras automatiskt varje dag med nya titlar som dyker upp på dina tjänster – både färska och äldre som tidigare missats. ' +
       'Alla titlar som matchar dina filter visas, sorterade och uppdelade tio i taget.</p>' +
 
       '<h3 class="info-h">Ikonerna på varje kort</h3>' +
