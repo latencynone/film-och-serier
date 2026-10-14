@@ -6,7 +6,7 @@ on:
     # timme med sommartid). Daglig körning behövs för att den djupa
     # titelsökningen ska hinna ikapp inom OMDb:s gräns på 1000 anrop/dygn;
     # när allt är kollat blir varje körning snabb och billig.
-    - cron: "0 4 * * *"
+    - cron: "0 4 * * 1"
   workflow_dispatch: {}  # gör det möjligt att köra manuellt från Actions-fliken
 
 permissions:
