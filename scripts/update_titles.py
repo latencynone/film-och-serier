@@ -44,7 +44,7 @@ SEEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seen_cache
 # resultatet av varje kollad titel kommer ihåg i seen_cache.json, så samma
 # titel inte kostar ett OMDb-anrop varje körning. OMDb:s gratisgräns är
 # 1000 anrop/dygn; budgeten nedan lämnar marginal för en extra manuell körning.
-MAX_OMDB_PER_RUN = 450
+MAX_OMDB_PER_RUN = 900  # veckokörning; OMDb gratis tillåter 1000/dygn
 DEEP_PAGES = 25  # 25 sidor x 20 = upp till 500 titlar per tjänst och typ
 YEAR_PAGES = 15  # per premiärår: upp till 300 titlar per tjänst och typ
 # Hur länge ett kollat resultat gäller innan titeln kollas om (dagar).
