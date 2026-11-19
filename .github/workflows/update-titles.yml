@@ -2,7 +2,7 @@ name: Uppdatera titlar
 
 on:
   schedule:
-    # Varje dag ca kl 06:00 svensk tid (cron kör i UTC, så tiden skiftar en
+    # Varje måndag ca kl 06:00 svensk tid (cron kör i UTC, så tiden skiftar en
     # timme med sommartid). Daglig körning behövs för att den djupa
     # titelsökningen ska hinna ikapp inom OMDb:s gräns på 1000 anrop/dygn;
     # när allt är kollat blir varje körning snabb och billig.
