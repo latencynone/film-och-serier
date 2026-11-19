@@ -44,6 +44,7 @@ SEEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seen_cache
 # resultatet av varje kollad titel kommer ihåg i seen_cache.json, så samma
 # titel inte kostar ett OMDb-anrop varje körning. OMDb:s gratisgräns är
 # 1000 anrop/dygn; budgeten nedan lämnar marginal för en extra manuell körning.
+_NON_LATIN = re.compile(r"[^\x00-\u024F\u2000-\u206F]")
 MAX_OMDB_PER_RUN = 900  # veckokörning; OMDb gratis tillåter 1000/dygn
 DEEP_PAGES = 25  # 25 sidor x 20 = upp till 500 titlar per tjänst och typ
 YEAR_PAGES = 15  # per premiärår: upp till 300 titlar per tjänst och typ
@@ -407,6 +408,17 @@ def build_entry(item, media_type, service_name, known_ids=None, refresh=True):
     date_str = item.get("release_date") or item.get("first_air_date")
     if not title or not date_str:
         return None
+    # TMDb ger originaltiteln på originalspråk (t.ex. devanagari, tamil, hangul)
+    # när svensk titel saknas. Hämta då engelsk titel, och hoppa över om även
+    # den är i främmande skrift.
+    if _NON_LATIN.search(title):
+        en = tmdb_get(("/movie/" if media_type == "movie" else "/tv/") + str(item.get("id")),
+                      {"language": "en-US"}) or {}
+        en_title = en.get("title") or en.get("name") or ""
+        if not en_title or _NON_LATIN.search(en_title):
+            _LAST_REASON["v"] = "nodata"
+            return None
+        title = en_title
 
     # TV-genrer som brukar betyda "alltid färskt" veckoprogram utan en
     # egentlig handling att beskriva (wrestling, pratshower, nyheter) -
@@ -559,6 +571,15 @@ def main():
 
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         current = json.load(f)
+
+    # Engångsstädning: ta bort titlar som redan lagts in på främmande skrift.
+    removed_foreign = 0
+    for kind in ("film", "serie"):
+        keep = [it for it in current.get(kind, []) if not _NON_LATIN.search(it.get("title", ""))]
+        removed_foreign += len(current.get(kind, [])) - len(keep)
+        current[kind] = keep
+    if removed_foreign:
+        print("Städning: tog bort %d titlar med främmande skrift." % removed_foreign)
 
     by_id = {}
     existing_keys = set()
@@ -751,7 +772,7 @@ def main():
     if added["film"] or added["serie"]:
         log_history_run(added)
 
-    if not added["film"] and not added["serie"] and not upgraded:
+    if not added["film"] and not added["serie"] and not upgraded and not removed_foreign:
         print("Inga nya titlar eller uppdateringar den här veckan.")
         return
 
