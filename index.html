@@ -1485,7 +1485,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       : "https://www.rottentomatoes.com/search?search=" + encodeURIComponent(it.title);
     var mcLink = it.mcId
       ? "https://www.metacritic.com/" + (it.kind === "film" ? "movie/" : "tv/") + it.mcId + "/"
-      : "https://www.metacritic.com/search/all/" + encodeURIComponent(it.title) + "/results";
+      : "https://www.metacritic.com/search/" + encodeURIComponent(it.title) + "/";
     var posterOpen = !!state.posterExpanded[k];
     return '<article class="item fade" data-kind="' + it.kind + '" style="animation-delay:' +
       Math.min(i * 40, 400) + 'ms">' +
@@ -1641,7 +1641,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       : "https://www.rottentomatoes.com/search?search=" + encodeURIComponent(it.title);
     var mcLink = it.mcId
       ? "https://www.metacritic.com/" + (it.kind === "film" ? "movie/" : "tv/") + it.mcId + "/"
-      : "https://www.metacritic.com/search/all/" + encodeURIComponent(it.title) + "/results";
+      : "https://www.metacritic.com/search/" + encodeURIComponent(it.title) + "/";
     return '<article class="item" data-kind="' + it.kind + '">' +
       '<div class="rail"><span class="dot"></span><div class="yr">' + d.getFullYear() +
       '</div><div class="md">' + rest + "</div>" +
