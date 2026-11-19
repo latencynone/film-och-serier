@@ -1360,6 +1360,11 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
     if (!h && !m) return null;
     return (h ? parseInt(h[1], 10) * 60 : 0) + (m ? parseInt(m[1], 10) : 0);
   }
+  // Speltid för visning; tom sträng om datan saknar tid ("0 min").
+  function lengthLabel(it) {
+    var m = parseRuntimeMinutes(it.length);
+    return m === 0 ? "" : esc(it.length);
+  }
   function matchesRuntimeFilter(it) {
     if (!state.runtimeFilter) return true;
     var mins = parseRuntimeMinutes(it.length);
@@ -1519,7 +1524,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       '<select class="rate-sel" data-rate="' + esc(k) + '" data-rated="' + (myRating ? 1 : 0) + '"' + dis +
       ' aria-label="Sätt ditt betyg för ' + esc(it.title) + '">' + rateOpts + "</select>" +
       "</div>" +
-      '<div class="meta2"><span class="genre-tag">' + esc(it.genre) + "</span><span>" + esc(it.length) + "</span>" +
+      '<div class="meta2"><span class="genre-tag">' + esc(it.genre) + "</span>" + (lengthLabel(it) ? "<span>" + lengthLabel(it) + "</span>" : "") +
       ((state.tab === "favorit" || state.tab === "sett" || state.tab === "villse") ? "<span>" + (it.kind === "film" ? "Film" : "Serie") + "</span>" : "") +
       "</div>" +
       (state.tab === "villse"
@@ -1648,7 +1653,7 @@ body{background:var(--ink);color:var(--txt);font-family:var(--body);
       '<span class="imdb">IMDb ' + it.imdb.toFixed(1) + "</span>" +
       (it.rt ? '<a class="rt" href="' + rtLink + '" target="_blank" rel="noopener noreferrer">RT ' + it.rt + "%</a>" : "") +
       (it.mc ? '<a class="mc" href="' + mcLink + '" target="_blank" rel="noopener noreferrer">MC ' + it.mc + "</a>" : "") +
-      "<span>" + esc(it.genre) + "</span><span>" + esc(it.length) + "</span>" +
+      "<span>" + esc(it.genre) + "</span>" + (lengthLabel(it) ? "<span>" + lengthLabel(it) + "</span>" : "") +
       "<span>" + (it.kind === "film" ? "Film" : "Serie") + "</span></div>" +
       (isReceivedProfile(state.activeProfile) ? "" :
         isWantToSee(it)
